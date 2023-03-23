@@ -94,6 +94,13 @@ class PerspectiveTrainer(BaseTrainer):
             if gt_fpath:
                 raise Warning("No gt.txt provided for moda and modp evaluation.")
         for batch_idx, (data, map_gt, imgs_gt, frame) in enumerate(data_loader):
+            #######
+            # if batch_idx not in [20, 60, 100, 140, 180]:
+            #     continue
+            # if batch_idx>200:
+            #     return
+            #######
+
             with torch.no_grad():
                 map_res, imgs_res = self.model(data)
             if res_fpath is not None and gt_fpath is not None:
@@ -121,6 +128,34 @@ class PerspectiveTrainer(BaseTrainer):
             recall = true_positive / (true_positive + false_negative + 1e-4)
             precision_s.update(precision)
             recall_s.update(recall)
+
+            ######
+            # fig = plt.figure()
+            # subplt0 = fig.add_subplot(211, title="output")
+            # subplt1 = fig.add_subplot(212, title="target")
+            # subplt0.imshow(map_res.cpu().detach().numpy().squeeze())
+            # subplt1.imshow(self.criterion._traget_transform(map_res, map_gt, data_loader.dataset.map_kernel)
+            #                .cpu().detach().numpy().squeeze())
+            # plt.savefig('./vis/map'+ str(batch_idx)+'.jpg')
+            # plt.close(fig)
+            #
+            # # visualizing the heatmap for per-view estimation
+            # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
+            # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
+            # cvgt = self.criterion._traget_transform(imgs_res[0], imgs_gt[0], data_loader.dataset.img_kernel)
+            # gold_head = cvgt[0, 0].detach().cpu().numpy().squeeze()
+            # gold_head = Image.fromarray((gold_head * 255).astype('uint8'))
+            # gold_foot = cvgt[0, 1].detach().cpu().numpy().squeeze()
+            # gold_foot = Image.fromarray((gold_foot * 255).astype('uint8'))
+            # gold_foot.save('./vis/foot_label' + str(batch_idx) + '.jpg')
+            # gold_head.save('./vis/head_label' + str(batch_idx) + '.jpg')
+            # img0 = self.denormalize(data[0, 0]).cpu().numpy().squeeze().transpose([1, 2, 0])
+            # img0 = Image.fromarray((img0 * 255).astype('uint8'))
+            # head_cam_result = add_heatmap_to_image(heatmap0_head, img0)
+            # head_cam_result.save('./vis/cam1_head' + str(batch_idx) + '.jpg')
+            # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
+            # foot_cam_result.save('./vis/cam1_foot' + str(batch_idx) + '.jpg')
+            ######
 
         t1 = time.time()
         t_epoch = t1 - t0
@@ -168,7 +203,7 @@ class PerspectiveTrainer(BaseTrainer):
             print('moda: {:.1f}%, modp: {:.1f}%, precision: {:.1f}%, recall: {:.1f}%'.
                   format(moda, modp, precision, recall))
 
-        print('Test, Loss: {:.6f}, Precision: {:.1f}%, Recall: {:.1f}, \tTime: {:.3f}'.format(
+        print('Test, Loss: {:.6f}, Precision: {:.3f}%, Recall: {:.3f}, \tTime: {:.3f}'.format(
             losses / (len(data_loader) + 1), precision_s.avg * 100, recall_s.avg * 100, t_epoch))
 
         return losses / len(data_loader), precision_s.avg * 100, moda

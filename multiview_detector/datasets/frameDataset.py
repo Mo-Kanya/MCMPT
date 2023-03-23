@@ -160,7 +160,7 @@ class frameDataset(VisionDataset):
 class MMPframeDataset(VisionDataset):
     # TODO: MMP consists of several videos. For tracking, we cannot simply combine them together.
     def __init__(self, config_file, train=True, sample_freq=1, transform=ToTensor(), target_transform=ToTensor(),
-                 reID=False, grid_reduce=1, img_reduce=1, train_ratio=0.9, force_download=False):
+                 reID=False, grid_reduce=2, img_reduce=1, train_ratio=0.9, force_download=False):
         config = yaml.safe_load(open(config_file, 'r'))
         root = config["train_root"] if train else config["valid_root"]
         super().__init__(root, transform=transform, target_transform=target_transform)
@@ -177,8 +177,10 @@ class MMPframeDataset(VisionDataset):
         self.gt_fpath = None  # TODO: parse labels to write a gt.txt
 
         # TODO: tune this Gaussian kernel size
-        map_sigma, map_kernel_size = 8 / grid_reduce, 8
-        img_sigma, img_kernel_size = 3 / img_reduce, 3
+        # map_sigma, map_kernel_size = 20 / grid_reduce, 20
+        # img_sigma, img_kernel_size = 10 / img_reduce, 10
+        map_sigma, map_kernel_size = 16 / grid_reduce, 16
+        img_sigma, img_kernel_size = 8 / img_reduce, 8
 
         x, y = np.meshgrid(np.arange(-map_kernel_size, map_kernel_size + 1),
                            np.arange(-map_kernel_size, map_kernel_size + 1))
@@ -208,8 +210,8 @@ class MMPframeDataset(VisionDataset):
         self.sample_freq = sample_freq
 
         self.grid_size = config["grid_size"]
-        self.grid_reduce = 1
-        self.reducedgrid_shape = self.grid_size  # assuming no reduction
+        self.reducedgrid_shape = list(map(lambda x: int(x / self.grid_reduce), self.grid_size))
+        # self.reducedgrid_shape = self.grid_size  # assuming no reduction
         camera_configs = json.load(open(os.path.join(self.calibration_path)))
         self.intrinsic_matrices = [np.zeros((3, 3)) for i in range(self.num_cam)]
         self.extrinsic_matrices = [np.zeros((3, 4)) for i in range(self.num_cam)]
@@ -293,14 +295,12 @@ class MMPframeDataset(VisionDataset):
             v, i_s, j_s = [], [], []
             for row in csv_reader:
                 v.append(1)
-                i_s.append(int(float(row[1])))
-                j_s.append(int(float(row[2])))
-            map_gt = coo_matrix((v, (i_s, j_s)), shape=self.grid_size).toarray()
+                i_s.append( min(int(float(row[1]) / self.grid_reduce), self.reducedgrid_shape[0])-1 )
+                j_s.append( min(int(float(row[2]) / self.grid_reduce), self.reducedgrid_shape[1])-1 )
+            map_gt = coo_matrix((v, (i_s, j_s)), shape=self.reducedgrid_shape).toarray()
             if self.target_transform is not None:
                 map_gt = self.target_transform(map_gt)
         return imgs, map_gt.float(), imgs_gt, new_index
-
-
 
 
 def test():
@@ -340,6 +340,7 @@ def test():
     print(torch.sum(map_gt), torch.max(map_gt), torch.min(map_gt))
     print(torch.max(imgs_gt[0][0]), torch.min(imgs_gt[0][0]))
     print(torch.max(imgs_gt[0][1]), torch.min(imgs_gt[0][1]))
+
     pass
 
 
@@ -356,3 +357,4 @@ if __name__ == '__main__':
     print(torch.sum(map_gt), torch.max(map_gt), torch.min(map_gt))
     print(torch.max(imgs_gt[0][0]), torch.min(imgs_gt[0][0]))
     print(torch.max(imgs_gt[0][1]), torch.min(imgs_gt[0][1]))
+    print(dataset.reducedgrid_shape)

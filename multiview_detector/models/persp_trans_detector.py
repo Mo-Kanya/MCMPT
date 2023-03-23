@@ -20,12 +20,13 @@ class PerspTransDetector(nn.Module):
                                                                            dataset.worldgrid2worldcoord_mat)
         self.coord_map = self.create_coord_map(self.reducedgrid_shape + [1])
         # img
-        # self.upsample_shape = list(map(lambda x: int(x / dataset.img_reduce), self.img_shape))
-        self.upsample_shape = list(map(lambda x: int(x/1), self.img_shape))
+        self.upsample_shape = list(map(lambda x: int(x / dataset.img_reduce), self.img_shape))
+        # self.upsample_shape = list(map(lambda x: int(x/1), self.img_shape))
         img_reduce = np.array(self.img_shape) / np.array(self.upsample_shape)
         img_zoom_mat = np.diag(np.append(img_reduce, [1]))
         # map
         map_zoom_mat = np.diag(np.append(np.ones([2]) / dataset.grid_reduce, [1]))
+        # print(img_reduce, img_zoom_mat)
         # projection matrices: img feat -> map feat
         self.proj_mats = [torch.from_numpy(map_zoom_mat @ imgcoord2worldgrid_matrices[cam] @ img_zoom_mat)
                           for cam in range(self.num_cam)]
@@ -66,6 +67,7 @@ class PerspTransDetector(nn.Module):
             img_feature = self.base_pt2(img_feature.to('cuda:0'))
             img_feature = F.interpolate(img_feature, self.upsample_shape, mode='bilinear')
             img_res = self.img_classifier(img_feature.to('cuda:0'))
+            # print(img_res.shape)
             imgs_result.append(img_res)
             proj_mat = self.proj_mats[cam].repeat([B, 1, 1]).float().to('cuda:0')
             world_feature = kornia.geometry.transform.imgwarp.warp_perspective(img_feature.to('cuda:0'), proj_mat, self.reducedgrid_shape)  # warp_perspective3d
@@ -76,8 +78,9 @@ class PerspTransDetector(nn.Module):
                 plt.imshow(torch.norm(world_feature[0].detach(), dim=0).cpu().numpy())
                 plt.show()
             world_features.append(world_feature.to('cuda:0'))
-
+        # print(torch.cuda.memory_allocated() / 1e9)
         world_features = torch.cat(world_features + [self.coord_map.repeat([B, 1, 1, 1]).to('cuda:0')], dim=1)
+        # print(torch.cuda.memory_allocated() / 1e9)
         if visualize:
             plt.imsave("./vis_persp.jpg", torch.norm(world_features[0].detach(), dim=0).cpu().numpy())
             # plt.show()
@@ -134,15 +137,13 @@ def test():
 
     dataset = MMPframeDataset("/home/kanya/MVDet/multiview_detector/datasets/configs/retail.yaml")
     dataloader = DataLoader(dataset, 1, False, num_workers=4)
-
-    with torch.no_grad():
-        imgs, map_gt, imgs_gt, frame = next(iter(dataloader))
-        # imgs, map_gt, imgs_gt, frame = dataset[15]
-        model = PerspTransDetector(dataset)
-        map_res, img_res = model(imgs, visualize=True)
+    imgs, map_gt, imgs_gt, frame = next(iter(dataloader))
+    # imgs, map_gt, imgs_gt, frame = dataset[15]
+    model = PerspTransDetector(dataset)
+    map_res, img_res = model(imgs, visualize=True)
 
     # wp = np.array([2511.79245283, 392.26993865,  100., 1.])
-    # gp = np.array([336.39237111763816, 189.10957723734649, 1.])
+    # gp = np.array([336.39237111763816/4, 189.10957723734649/4, 1.])
     # res = model.proj_mats[2] @ gp
     # print(res[0]/res[2], res[1]/res[2]) # 250, 200
     # mid = np.array([212.77647348,  50.1102489, 3785.99952084])
