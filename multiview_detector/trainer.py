@@ -10,6 +10,15 @@ from multiview_detector.evaluation.evaluate import evaluate
 from multiview_detector.utils.nms import nms
 from multiview_detector.utils.meters import AverageMeter
 from multiview_detector.utils.image_utils import add_heatmap_to_image
+import scipy
+
+
+def mvdet_decode(scoremap):
+    B, C, H, W = scoremap.shape
+    xy = torch.nonzero(torch.ones_like(scoremap[:, 0])).view([B, H * W, 3])[:, :, [2, 1]].float()
+    scores = scoremap.permute(0, 2, 3, 1).reshape(B, H * W, 1)
+
+    return torch.cat([xy, scores], dim=2)
 
 
 class BaseTrainer(object):
@@ -95,9 +104,9 @@ class PerspectiveTrainer(BaseTrainer):
                 raise Warning("No gt.txt provided for moda and modp evaluation.")
         for batch_idx, (data, map_gt, imgs_gt, frame) in enumerate(data_loader):
             #######
-            # if batch_idx not in [20, 60, 100, 140, 180]:
+            # if batch_idx < 1500:
             #     continue
-            # if batch_idx>200:
+            # if batch_idx >= 1800:
             #     return
             #######
 
@@ -120,26 +129,64 @@ class PerspectiveTrainer(BaseTrainer):
             loss = self.criterion(map_res, map_gt.to(map_res.device), data_loader.dataset.map_kernel) + \
                    loss / len(imgs_gt) * self.alpha
             losses += loss.item()
-            pred = (map_res > self.cls_thres).int().to(map_gt.device)
-            true_positive = (pred.eq(map_gt) * pred.eq(1)).sum().item()
-            false_positive = pred.sum().item() - true_positive
-            false_negative = map_gt.sum().item() - true_positive
-            precision = true_positive / (true_positive + false_positive + 1e-4)
-            recall = true_positive / (true_positive + false_negative + 1e-4)
+
+            if map_gt.sum().item() == 0: continue
+            pred = map_res
+            # TODO: try if a sigmoid is needed
+            xys = mvdet_decode(torch.sigmoid(pred.detach().cpu()))
+            positions, scores = xys[:, :, :2], xys[:, :, 2:3]
+            ids = scores.squeeze() > 0.4
+            pos, s = positions[0, ids], scores[0, ids, 0]
+            ids, count = nms(pos, s, 12, top_k=500)
+            count = min(count, 20)
+            ids = ids[:count]
+            ids = torch.stack([ids%212, ids//212]).T
+
+            xys_gt = mvdet_decode(map_gt.detach().cpu())
+            positions_gt, scores_gt = xys_gt[:, :, :2], xys_gt[:, :, 2:3]
+            ids_gt = scores_gt.squeeze() == 1
+            pos_gt = positions_gt[0, ids_gt]
+
+            # print(ids.shape, pos_gt.shape)
+            cost_m = torch.cdist(pos_gt.float(),ids.float())
+            row_ids, col_ids = scipy.optimize.linear_sum_assignment(cost_m)
+
+            costs = np.array([cost_m[r,c] for r,c in zip(row_ids, col_ids)])
+            true_positive = np.sum(costs<12.5)
+            false_positive = count-true_positive
+            false_negative = len(cost_m)-true_positive
+            # print(count, len(cost_m), true_positive)
+
+            # true_positive = (pred.eq(map_gt) * pred.eq(1)).sum().item()
+            # false_positive = pred.sum().item() - true_positive
+            # false_negative = map_gt.sum().item() - true_positive
+            precision = true_positive / (true_positive + false_positive)
+            recall = true_positive / (true_positive + false_negative)
+            # print(precision, recall)
+            # print(cost_m.shape, precision, recall)
             precision_s.update(precision)
             recall_s.update(recall)
 
             ######
+            # final_res = torch.zeros_like(map_gt)
+            # for ix, iy in ids:
+            #    final_res[0, 0, iy, ix] = 1
+            #
             # fig = plt.figure()
-            # subplt0 = fig.add_subplot(211, title="output")
-            # subplt1 = fig.add_subplot(212, title="target")
-            # subplt0.imshow(map_res.cpu().detach().numpy().squeeze())
+            # subplt0 = fig.add_subplot(221, title="Output")
+            # subplt1 = fig.add_subplot(222, title="Target")
+            # subplt2 = fig.add_subplot(223, title="View1")
+            # subplt3 = fig.add_subplot(224, title="View2")
+            # subplt0.imshow(self.criterion._sample_transform(final_res, data_loader.dataset.map_kernel).cpu().detach().numpy().squeeze())
             # subplt1.imshow(self.criterion._traget_transform(map_res, map_gt, data_loader.dataset.map_kernel)
             #                .cpu().detach().numpy().squeeze())
-            # plt.savefig('./vis/map'+ str(batch_idx)+'.jpg')
-            # plt.close(fig)
+            # subplt2.imshow(data[0, 0].cpu().detach().numpy().squeeze().transpose([1, 2, 0]))
+            # subplt3.imshow(data[0, 2].cpu().detach().numpy().squeeze().transpose([1, 2, 0]))
             #
-            # # visualizing the heatmap for per-view estimation
+            # plt.savefig('./vis/eval_'+ str(batch_idx)+'.jpg')
+            # plt.close(fig)
+
+            # visualizing the heatmap for per-view estimation
             # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
             # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
             # cvgt = self.criterion._traget_transform(imgs_res[0], imgs_gt[0], data_loader.dataset.img_kernel)

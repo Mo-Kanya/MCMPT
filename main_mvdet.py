@@ -100,12 +100,33 @@ def main(args):
     test_prec_s = []
     test_moda_s = []
 
+    # print("Load states from MultiviewX ckpt")
+    ckpt_path = "/home/kanya/MVDet/MVDet_checkpoints/logs/multiviewx_frame/default/2021-01-20_22-56-14/MultiviewDetector.pth"
+    ckpt = torch.load(ckpt_path, map_location="cuda:0")
+    for k in ["world_classifier.0.weight", "world_classifier.0.bias",
+              "world_classifier.2.weight", "world_classifier.2.bias",
+              "world_classifier.4.weight"]:
+        ckpt["map"+k[5:]] = ckpt[k]
+        del ckpt[k]
+    model.load_state_dict(ckpt)
+
+    ###### debugging use
+    # ckpt_path = "/home/kanya/MVDet/logs/MMP_frame/default/2023-03-16_23-03-31/MultiviewDetector.pth"
+    # ckpt = torch.load(ckpt_path, map_location="cuda:0")
+    # model.load_state_dict(ckpt)
+    ######
+
     trainer = PerspectiveTrainer(model, criterion, logdir, denormalize, args.cls_thres, args.alpha)
+
+    ######
+    # trainer.test(test_loader)
+    # return 0
+    ######
 
     # learn
     if args.resume is None:
-        print('Testing...')
-        trainer.test(test_loader, os.path.join(logdir, 'test.txt'), train_set.gt_fpath, True)
+        # print('Testing...')
+        # trainer.test(test_loader, os.path.join(logdir, 'test.txt'), train_set.gt_fpath, True)
 
         for epoch in tqdm.tqdm(range(1, args.epochs + 1)):
             print('Training...')

@@ -160,7 +160,7 @@ class frameDataset(VisionDataset):
 class MMPframeDataset(VisionDataset):
     # TODO: MMP consists of several videos. For tracking, we cannot simply combine them together.
     def __init__(self, config_file, train=True, sample_freq=1, transform=ToTensor(), target_transform=ToTensor(),
-                 reID=False, grid_reduce=2, img_reduce=1, train_ratio=0.9, force_download=False):
+                 grid_reduce=2, img_reduce=1, train_ratio=0.9, force_download=False):
         config = yaml.safe_load(open(config_file, 'r'))
         root = config["train_root"] if train else config["valid_root"]
         super().__init__(root, transform=transform, target_transform=target_transform)
@@ -300,6 +300,7 @@ class MMPframeDataset(VisionDataset):
             map_gt = coo_matrix((v, (i_s, j_s)), shape=self.reducedgrid_shape).toarray()
             if self.target_transform is not None:
                 map_gt = self.target_transform(map_gt)
+
         return imgs, map_gt.float(), imgs_gt, new_index
 
 
