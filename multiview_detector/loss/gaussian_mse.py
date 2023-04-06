@@ -18,9 +18,3 @@ class GaussianMSE(nn.Module):
         with torch.no_grad():
             target = F.conv2d(target, kernel.float().to(target.device), padding=int((kernel.shape[-1] - 1) / 2))
         return target
-
-    def _sample_transform(self, x, kernel):
-        # for visualization results after post-processing
-        with torch.no_grad():
-            x = F.conv2d(x, kernel.float().to(x.device), padding=int((kernel.shape[-1] - 1) / 2))
-        return x
