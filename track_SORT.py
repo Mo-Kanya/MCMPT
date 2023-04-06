@@ -220,7 +220,7 @@ def detect_and_track(model, log_fpath, data_loader,
                     
                     width = x_cam_bottomright - x_cam_topleft
                     
-                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),2*width,PERSON_HEIGHT,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),width,PERSON_HEIGHT,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
                     fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),color='white',weight='bold',fontsize=10,ha='center',va='center')
                     fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_topleft, y_cam_topleft),10,fill=True,lw=1,ec='black'))
                     fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_bottomright, y_cam_bottomright),10,fill=True,lw=1,ec='white'))
