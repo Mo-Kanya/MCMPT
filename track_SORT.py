@@ -14,6 +14,7 @@ import torch.optim as optim
 import torchvision.transforms as T
 from matplotlib import pyplot as plt
 from PIL import Image
+plt.axis('off')
 
 from multiview_detector.datasets import *
 from multiview_detector.loss.gaussian_mse import GaussianMSE
@@ -31,10 +32,58 @@ from multiview_detector.evaluation.evaluate import evaluate
 
 from SORT.sort import *
 
+from mmp_tracking_helper.mmp_mapping3D_2D_script import *
+
 IOU_THS = 0.001
 NMS_THS = 5
 
-def detect_and_track(model, logfp, data_loader, res_fpath=None, gt_fpath=None, visualize=False):
+def project_topdown2camera(topdown_coords, cam_id, cam_intrinsic, cam_extrinsic, worldgrid2worldcoord_mat):
+    
+    worldcoord2imgcoord_mat = cam_intrinsic @ cam_extrinsic #np.delete(, 2, 1)
+    worldgrid2imgcoord_mat = worldcoord2imgcoord_mat @ worldgrid2worldcoord_mat
+    worldgrid2imgcoord_mat = np.delete(worldgrid2imgcoord_mat, 2, 1)
+    
+    # worldcoord2imgcoord_mat = cam_intrinsic @ np.delete(cam_extrinsic, 2, 1)
+    # worldgrid2imgcoord_mat = worldcoord2imgcoord_mat @ worldgrid2worldcoord_mat
+    
+    rot_m = cam_extrinsic[:,:3]
+    tran_m = np.linalg.inv(-rot_m) @ cam_extrinsic[:,-1]
+    # self.extrinsic_matrices[cam_id][:, :3] = rot_m
+    # self.extrinsic_matrices[cam_id][:, -1] = -rot_m @ np.asarray(camera_param['ExtrinsicParameters']['Translation'])
+    
+    Fx = cam_intrinsic[0,0]
+    Fy = cam_intrinsic[1,1]
+    FInv = np.asarray([1/Fx, 1/Fy, 1])
+    # self.intrinsic_matrices[cam_id][0, 0] = camera_param['IntrinsicParameters']['Fx']
+    # self.intrinsic_matrices[cam_id][1, 1] = camera_param['IntrinsicParameters']['Fy']
+    # self._camera_parameters[cam_id]['FInv'] = np.asarray([
+    #             1 / camera_param['IntrinsicParameters']['Fx'],
+    #             1 / camera_param['IntrinsicParameters']['Fy'], 1
+    #         ])
+    Cx = cam_intrinsic[0,2]
+    Cy = cam_intrinsic[1,2]
+    C = np.asarray([Cx, Cy, 1])
+    
+    world_coord = np.asarray([topdown_coords[0], topdown_coords[1], 0])
+    uvw = np.linalg.inv(rot_m) @ (world_coord - tran_m)
+    pixel_coords = uvw / FInv / uvw[2] + C
+    
+    return pixel_coords[0], pixel_coords[1]
+    # topdown_coords = np.transpose(
+    #     np.asarray([[person_center['X'], person_center['Y'], 0]]))
+    # world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] + self._min_volume[:, np.newaxis]
+    # uvw = np.linalg.inv(self._camera_parameters[camera_id]['Rotation']) @ (
+    #     world_coord - self._camera_parameters[camera_id]['Translation'][:, np.newaxis])
+    # pixel_coords = uvw / self._camera_parameters[camera_id]['FInv'][:, np.newaxis] / uvw[
+    #     2, :] + self._camera_parameters[camera_id]['C'][:, np.newaxis]
+    # return pixel_coords[0][0], pixel_coords[1][0]
+
+def detect_and_track(model, log_fpath, data_loader, 
+                     res_fpath=None, gt_fpath=None, 
+                     visualize=False, 
+                     num_cam=0, camera_intrinsic=None, camera_extrinsic=None,
+                     worldgrid2worldcoord_mat=None,
+                     coord_mapper=None):
     losses = 0
     precision_s, recall_s = AverageMeter(), AverageMeter()
     all_res_list = []
@@ -51,16 +100,11 @@ def detect_and_track(model, logfp, data_loader, res_fpath=None, gt_fpath=None, v
         # assert gt_fpath is not None
         if gt_fpath:
             raise Warning("No gt.txt provided for moda and modp evaluation.")
+    
     for batch_idx, (data, map_gt, imgs_gt, frame) in enumerate(data_loader):
-        #######
-        # if batch_idx not in [20, 60, 100, 140, 180]:
-        #     continue
-        # if batch_idx>200:
-        #     return
-        #######
-
         with torch.no_grad():
             map_res, imgs_res = model(data)
+        
         if res_fpath is not None:
         # if res_fpath is not None and gt_fpath is not None:
             map_grid_res = map_res.detach().cpu().squeeze()
@@ -99,61 +143,89 @@ def detect_and_track(model, logfp, data_loader, res_fpath=None, gt_fpath=None, v
             subplt1 = fig.add_subplot(122, title=f"target_{batch_idx}")
             subplt0.imshow(map_res.cpu().detach().numpy().squeeze())
             subplt1.imshow(criterion._traget_transform(map_res, map_gt, data_loader.dataset.map_kernel).cpu().detach().numpy().squeeze())
+            subplt0.set_axis_off()
+            subplt1.set_axis_off()
             # plt.savefig('./vis/map'+ str(batch_idx)+'.jpg')
             # plt.close(fig)
             
-            # # visualizing the heatmap for per-view estimation
-            # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
-            # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
-            # cvgt = criterion._traget_transform(imgs_res[0], imgs_gt[0], data_loader.dataset.img_kernel)
-            # gold_head = cvgt[0, 0].detach().cpu().numpy().squeeze()
-            # gold_head = Image.fromarray((gold_head * 255).astype('uint8'))
-            # gold_foot = cvgt[0, 1].detach().cpu().numpy().squeeze()
-            # gold_foot = Image.fromarray((gold_foot * 255).astype('uint8'))
-            # gold_foot.save('./vis/foot_label' + str(batch_idx) + '.jpg')
-            # gold_head.save('./vis/head_label' + str(batch_idx) + '.jpg')
-            # img0 = denormalize(data[0, 0]).cpu().numpy().squeeze().transpose([1, 2, 0])
-            # img0 = Image.fromarray((img0 * 255).astype('uint8'))
-            # head_cam_result = add_heatmap_to_image(heatmap0_head, img0)
-            # head_cam_result.save('./vis/cam1_head' + str(batch_idx) + '.jpg')
-            # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
-            # foot_cam_result.save('./vis/cam1_foot' + str(batch_idx) + '.jpg')
-            ######
+            if visualize: #added this line just to collapse the comments
+                # # visualizing the heatmap for per-view estimation
+                # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
+                # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
+                # cvgt = criterion._traget_transform(imgs_res[0], imgs_gt[0], data_loader.dataset.img_kernel)
+                # gold_head = cvgt[0, 0].detach().cpu().numpy().squeeze()
+                # gold_head = Image.fromarray((gold_head * 255).astype('uint8'))
+                # gold_foot = cvgt[0, 1].detach().cpu().numpy().squeeze()
+                # gold_foot = Image.fromarray((gold_foot * 255).astype('uint8'))
+                # gold_foot.save('./vis/foot_label' + str(batch_idx) + '.jpg')
+                # gold_head.save('./vis/head_label' + str(batch_idx) + '.jpg')
+                # img0 = denormalize(data[0, 0]).cpu().numpy().squeeze().transpose([1, 2, 0])
+                # img0 = Image.fromarray((img0 * 255).astype('uint8'))
+                # head_cam_result = add_heatmap_to_image(heatmap0_head, img0)
+                # head_cam_result.save('./vis/cam1_head' + str(batch_idx) + '.jpg')
+                # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
+                # foot_cam_result.save('./vis/cam1_foot' + str(batch_idx) + '.jpg')
+                ######
+                pass
         
+        ## NMS before tracking
         ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, np.inf)
         grid_xy = grid_xy[ids[:count], :]
         scores = scores[ids[:count]]
         
+        ## Pre-process detection results for tracking
+        ## 
         detections = []
-        for i, (fid, xy, score) in enumerate(zip(frame_id, grid_xy, scores)):
+        for i, (fid, xy, xy_world, score) in enumerate(zip(frame_id, grid_xy, world_xy, scores)):
             # res[1:] /= dataloader.dataset.world_reduce
             # res[1:] -= offset[i]
             fid = int(fid.item())
             x, y = xy[0].item(), xy[1].item()
             detections.append(list([x-5,y-5,x+5,y+5,score.item()]))
-            # subplt0.add_patch(patches.Rectangle((int(x),int(y)),5,5,fill=False,lw=3,ec=colours[fid%32,:]))
+            
+            fig_cam = plt.figure()
+            fig_cam_subplots = []
+            xy_cam = []
+            for cam_id in range(num_cam):
+                fig_cam_subplots.append(fig_cam.add_subplot(3, 2, cam_id+1, title=f"Camera {cam_id+1}"))
+                # x_cam, y_cam = project_topdown2camera(xy_world, cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id])
+                # xy_cam.append([x_cam, y_cam])
+                
+                img_cam = data[0][cam_id].permute(1,2,0).detach().cpu().numpy()
+                fig_cam_subplots[cam_id].imshow(img_cam)
+                fig_cam_subplots[cam_id].set_axis_off()
+                
+                
         detections = np.array(detections)
         
         track_bbs_ids = mot_tracker.update(detections)
         
         for d in track_bbs_ids:
-            # track_bbs_idx: Nx5 (bb_x, bb_y, bb2_x, bb2_y, track_id)
+            ## track_bbs_idx: Nx5 (bb_x, bb_y, bb2_x, bb2_y, track_id)
             print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame[0],d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]))
             if visualize:
                 d = d.astype(np.int32)
                 subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%len(colours)]))
                 # subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%32,:]))
+                for cam_id in range(num_cam):
+                    # x_cam, y_cam = project_topdown2camera([d[0],d[1]], cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id], worldgrid2worldcoord_mat)
+                    x_cam, y_cam = coord_mapper.projection({'X': d[0] * data_loader.dataset.grid_reduce, 'Y': d[1] * data_loader.dataset.grid_reduce}, cam_id+1)
+                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam, y_cam),30,50,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                    # print(f"cam {cam_id} | id {d[4]}: {x_cam}, {y_cam}")
 
         if visualize:
-            filename = logfp + f'_nms{NMS_THS}_iou{IOU_THS}_' + str(batch_idx).zfill(5) +'.jpg'
-            plt.savefig(filename)
+            topdown_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_' + str(batch_idx).zfill(5) +'_bev.jpg'
+            fig.savefig(topdown_filename)
             plt.close(fig)
             
+            cam_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_' + str(batch_idx).zfill(5) +'_cam.jpg'
+            fig_cam.savefig(cam_filename, bbox_inches='tight', )
+            plt.close(fig_cam)
 
     t1 = time.time()
     t_epoch = t1 - t0
 
-    # if visualize:
+    if visualize:
     #     fig = plt.figure()
     #     subplt0 = fig.add_subplot(211, title="output")
     #     subplt1 = fig.add_subplot(212, title="target")
@@ -172,6 +244,7 @@ def detect_and_track(model, logfp, data_loader, res_fpath=None, gt_fpath=None, v
         # head_cam_result.save(os.path.join(logdir, 'cam1_head.jpg'))
         # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
         # foot_cam_result.save(os.path.join(logdir, 'cam1_foot.jpg'))
+        pass
 
     moda = 0
     if res_fpath is not None and gt_fpath is not None:
@@ -196,34 +269,6 @@ def detect_and_track(model, logfp, data_loader, res_fpath=None, gt_fpath=None, v
         print('moda: {:.1f}%, modp: {:.1f}%, precision: {:.1f}%, recall: {:.1f}%'.
                 format(moda, modp, precision, recall))
         
-        # detections = []
-        # for i, (res, score) in enumerate(zip(res_list[batch_idx], score_list[batch_idx])):
-        #     # res[1:] /= dataloader.dataset.world_reduce
-        #     # res[1:] -= offset[i]
-        #     frame_id, x, y = int(res[0].item()), res[1].item(), res[2].item()
-        #     detections.append(list([x-1,y-1,x+1,y+1,score.item()]))
-        #     # ax1.add_patch(patches.Rectangle((int(x),int(y)),5,5,fill=False,lw=3,ec=colours[frame_id%32,:]))
-        # detections = np.array(detections)
-        
-        # mot_tracker = Sort() 
-        # track_bbs_ids = mot_tracker.update(detections)
-        
-        # for d in track_bbs_ids:
-        #     # track_bbs_idx: 37x5 (bb_x, bb_y, bb2_x, bb2_y, track_id)
-        #     print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame[0],d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]))
-        #     if visualize:
-        #         d = d.astype(np.int32)
-        #         subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
-        
-        # if visualize:
-        #     # fig.canvas.flush_events()
-        #     # plt.draw()
-        #     # ax1.cla()
-        #     # ax2.cla()
-        #     filename = f'vis/track{batch_idx if batch_idx else ""}.jpg'
-        #     plt.savefig(filename)
-        #     plt.close(fig)
-
     print('Test, Loss: {:.6f}, Precision: {:.3f}%, Recall: {:.3f}, \tTime: {:.3f}'.format(
         losses / (len(data_loader) + 1), precision_s.avg * 100, recall_s.avg * 100, t_epoch))
 
@@ -274,13 +319,25 @@ def main(args):
     
     # trainer = PerspectiveTrainer(model, criterion, logdir, denormalize, args.cls_thres, args.alpha)
     
+    coordmap = CoordMapper(test_set.calibration_path)
+    
     logdir = 'SORT_outputs'
     os.makedirs(logdir, exist_ok=True)
-    
     logfp = os.path.join(logdir, os.path.basename(os.path.dirname(model_path)))
     
     print('Test loaded model...')
-    detect_and_track(model, logfp, test_loader, os.path.join(logdir, 'test.txt'), test_set.gt_fpath, True)
+    detect_and_track(model=model, 
+                     log_fpath=logfp, 
+                     data_loader=test_loader, 
+                     res_fpath=os.path.join(logdir, 'test.txt'), 
+                     gt_fpath=test_set.gt_fpath, 
+                     visualize=True,
+                     num_cam=test_set.num_cam,
+                     camera_intrinsic=test_set.intrinsic_matrices,
+                     camera_extrinsic=test_set.extrinsic_matrices,
+                     worldgrid2worldcoord_mat=test_set.worldgrid2worldcoord_mat,
+                     coord_mapper=coordmap)
+    
     
 if __name__ == '__main__':
     # settings

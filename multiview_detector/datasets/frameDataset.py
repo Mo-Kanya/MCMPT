@@ -213,6 +213,7 @@ class MMPframeDataset(VisionDataset):
         self.reducedgrid_shape = list(map(lambda x: int(x / self.grid_reduce), self.grid_size))
         # self.reducedgrid_shape = self.grid_size  # assuming no reduction
         camera_configs = json.load(open(os.path.join(self.calibration_path)))
+        self.num_cam = len(camera_configs['Cameras'])
         self.intrinsic_matrices = [np.zeros((3, 3)) for i in range(self.num_cam)]
         self.extrinsic_matrices = [np.zeros((3, 4)) for i in range(self.num_cam)]
         for camera_param in camera_configs['Cameras']:
