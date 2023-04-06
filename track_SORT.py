@@ -36,6 +36,9 @@ from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 
 IOU_THS = 0.001
 NMS_THS = 5
+PERSON_WIDTH = 30
+PERSON_HEIGHT = 160
+BBOX_LEN = 10
 
 def project_topdown2camera(topdown_coords, cam_id, cam_intrinsic, cam_extrinsic, worldgrid2worldcoord_mat):
     
@@ -102,6 +105,8 @@ def detect_and_track(model, log_fpath, data_loader,
             raise Warning("No gt.txt provided for moda and modp evaluation.")
     
     for batch_idx, (data, map_gt, imgs_gt, frame) in enumerate(data_loader):
+        if frame[0] == 50:
+            exit()
         with torch.no_grad():
             map_res, imgs_res = model(data)
         
@@ -174,32 +179,33 @@ def detect_and_track(model, log_fpath, data_loader,
         scores = scores[ids[:count]]
         
         ## Pre-process detection results for tracking
-        ## 
+        ## FIXME: arbitrary bounding box created from point with width=10px, height=10px
         detections = []
         for i, (fid, xy, xy_world, score) in enumerate(zip(frame_id, grid_xy, world_xy, scores)):
             # res[1:] /= dataloader.dataset.world_reduce
             # res[1:] -= offset[i]
             fid = int(fid.item())
             x, y = xy[0].item(), xy[1].item()
-            detections.append(list([x-5,y-5,x+5,y+5,score.item()]))
+            detections.append(list([x-BBOX_LEN,y-BBOX_LEN,x+BBOX_LEN,y+BBOX_LEN,score.item()]))
             
-            fig_cam = plt.figure()
-            fig_cam_subplots = []
-            xy_cam = []
-            for cam_id in range(num_cam):
-                fig_cam_subplots.append(fig_cam.add_subplot(3, 2, cam_id+1, title=f"Camera {cam_id+1}"))
-                # x_cam, y_cam = project_topdown2camera(xy_world, cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id])
-                # xy_cam.append([x_cam, y_cam])
-                
-                img_cam = data[0][cam_id].permute(1,2,0).detach().cpu().numpy()
-                fig_cam_subplots[cam_id].imshow(img_cam)
-                fig_cam_subplots[cam_id].set_axis_off()
-                
+            if visualize:
+                ## Prepare camera images
+                fig_cam = plt.figure(figsize=(6.4*2,4.8*2))
+                fig_cam_subplots = []
+                xy_cam = []
+                for cam_id in range(num_cam):
+                    fig_cam_subplots.append(fig_cam.add_subplot(3, 2, cam_id+1, title=f"Camera {cam_id+1}"))
+                    # x_cam, y_cam = project_topdown2camera(xy_world, cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id])
+                    # xy_cam.append([x_cam, y_cam])
+                    
+                    img_cam = data[0][cam_id].permute(1,2,0).detach().cpu().numpy()
+                    fig_cam_subplots[cam_id].imshow(img_cam)
+                    fig_cam_subplots[cam_id].set_axis_off()
                 
         detections = np.array(detections)
         
+        ## Update tracking with current detections
         track_bbs_ids = mot_tracker.update(detections)
-        
         for d in track_bbs_ids:
             ## track_bbs_idx: Nx5 (bb_x, bb_y, bb2_x, bb2_y, track_id)
             print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame[0],d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]))
@@ -209,8 +215,15 @@ def detect_and_track(model, log_fpath, data_loader,
                 # subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%32,:]))
                 for cam_id in range(num_cam):
                     # x_cam, y_cam = project_topdown2camera([d[0],d[1]], cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id], worldgrid2worldcoord_mat)
-                    x_cam, y_cam = coord_mapper.projection({'X': d[0] * data_loader.dataset.grid_reduce, 'Y': d[1] * data_loader.dataset.grid_reduce}, cam_id+1)
-                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam, y_cam),30,50,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                    x_cam_topleft, y_cam_topleft = coord_mapper.projection({'X': d[0] * data_loader.dataset.grid_reduce, 'Y': d[1] * data_loader.dataset.grid_reduce}, cam_id+1)
+                    x_cam_bottomright, y_cam_bottomright = coord_mapper.projection({'X': d[2] * data_loader.dataset.grid_reduce, 'Y': d[3] * data_loader.dataset.grid_reduce}, cam_id+1)
+                    
+                    width = x_cam_bottomright - x_cam_topleft
+                    
+                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),2*width,PERSON_HEIGHT,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                    fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),color='white',weight='bold',fontsize=10,ha='center',va='center')
+                    fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_topleft, y_cam_topleft),10,fill=True,lw=1,ec='black'))
+                    fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_bottomright, y_cam_bottomright),10,fill=True,lw=1,ec='white'))
                     # print(f"cam {cam_id} | id {d[4]}: {x_cam}, {y_cam}")
 
         if visualize:
@@ -300,7 +313,7 @@ def main(args):
     # train_set = frameDataset(base, train=True, transform=train_trans, grid_reduce=4)
     # test_set = frameDataset(base, train=False, transform=train_trans, grid_reduce=4)
     
-    config_file = "/home/kanya/MVDet/multiview_detector/datasets/configs/retail.yaml"
+    config_file = "/home/yeojin/MCMPT/multiview_detector/datasets/configs/retail.yaml"
     # train_set = MMPframeDataset(config_file, train=True, sample_freq=args.sample_freq)
     # test_set = MMPframeDataset(config_file, train=False, sample_freq=args.sample_freq)
     test_set = MMPframeDataset(config_file, train=False, sample_freq=args.sample_freq)
