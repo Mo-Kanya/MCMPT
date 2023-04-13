@@ -34,11 +34,13 @@ from SORT.sort import *
 
 from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 
-IOU_THS = 0.001
-NMS_THS = 5
+IOU_THS = 0.01
+NMS_THS = 12
+TOP_K = 500
 PERSON_WIDTH = 30
 PERSON_HEIGHT = 160
-BBOX_LEN = 10
+BBOX_LEN = 5
+PROJ_Z_VAL = 0
 
 def project_topdown2camera(topdown_coords, cam_id, cam_intrinsic, cam_extrinsic, worldgrid2worldcoord_mat):
     
@@ -107,6 +109,7 @@ def detect_and_track(model, log_fpath, data_loader,
     for batch_idx, (data, map_gt, imgs_gt, frame) in enumerate(data_loader):
         if frame[0] == 50:
             exit()
+            #TODO: figure out where OOM is happening
         with torch.no_grad():
             map_res, imgs_res = model(data)
         
@@ -170,11 +173,11 @@ def detect_and_track(model, log_fpath, data_loader,
                 # head_cam_result.save('./vis/cam1_head' + str(batch_idx) + '.jpg')
                 # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
                 # foot_cam_result.save('./vis/cam1_foot' + str(batch_idx) + '.jpg')
-                ######
                 pass
         
         ## NMS before tracking
-        ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, np.inf)
+        ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, TOP_K)
+        # ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, np.inf)
         grid_xy = grid_xy[ids[:count], :]
         scores = scores[ids[:count]]
         
@@ -215,23 +218,27 @@ def detect_and_track(model, log_fpath, data_loader,
                 # subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%32,:]))
                 for cam_id in range(num_cam):
                     # x_cam, y_cam = project_topdown2camera([d[0],d[1]], cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id], worldgrid2worldcoord_mat)
-                    x_cam_topleft, y_cam_topleft = coord_mapper.projection({'X': d[0] * data_loader.dataset.grid_reduce, 'Y': d[1] * data_loader.dataset.grid_reduce}, cam_id+1)
-                    x_cam_bottomright, y_cam_bottomright = coord_mapper.projection({'X': d[2] * data_loader.dataset.grid_reduce, 'Y': d[3] * data_loader.dataset.grid_reduce}, cam_id+1)
+                    x_cam_bottomleft, y_cam_bottomleft = coord_mapper.projection({'X': d[0] * data_loader.dataset.grid_reduce, 'Y': d[1] * data_loader.dataset.grid_reduce}, cam_id+1, z=PROJ_Z_VAL)
+                    x_cam_topright, y_cam_topright = coord_mapper.projection({'X': d[2] * data_loader.dataset.grid_reduce, 'Y': d[3] * data_loader.dataset.grid_reduce}, cam_id+1, z=PROJ_Z_VAL)
                     
-                    width = x_cam_bottomright - x_cam_topleft
+                    width = x_cam_topright - x_cam_bottomleft
+                    height = y_cam_topright - y_cam_bottomleft
                     
-                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),width,PERSON_HEIGHT,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
-                    fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomright-width, y_cam_bottomright-PERSON_HEIGHT),color='white',weight='bold',fontsize=10,ha='center',va='center')
-                    fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_topleft, y_cam_topleft),10,fill=True,lw=1,ec='black'))
-                    fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_bottomright, y_cam_bottomright),10,fill=True,lw=1,ec='white'))
+                    # fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomleft, y_cam_bottomleft),width,height,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                    # fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomleft, y_cam_bottomleft),color='white',weight='bold',fontsize=15,ha='center',va='center')
+                    fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomleft, y_cam_bottomleft),width,PERSON_HEIGHT,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                    fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomleft, y_cam_bottomleft),color='white',weight='bold',fontsize=10,ha='center',va='center')
+                    
+                    # fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_bottomleft, y_cam_bottomleft),10,fill=True,lw=1,ec='black'))
+                    # fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_topright, y_cam_topright),10,fill=True,lw=1,ec='white'))
                     # print(f"cam {cam_id} | id {d[4]}: {x_cam}, {y_cam}")
 
         if visualize:
-            topdown_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_' + str(batch_idx).zfill(5) +'_bev.jpg'
+            topdown_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_bbox{BBOX_LEN}_projz{PROJ_Z_VAL}_' + str(batch_idx).zfill(5) +'_bev.jpg'
             fig.savefig(topdown_filename)
             plt.close(fig)
             
-            cam_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_' + str(batch_idx).zfill(5) +'_cam.jpg'
+            cam_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_bbox{BBOX_LEN}_projz{PROJ_Z_VAL}_' + str(batch_idx).zfill(5) +'_cam.jpg'
             fig_cam.savefig(cam_filename, bbox_inches='tight', )
             plt.close(fig_cam)
 

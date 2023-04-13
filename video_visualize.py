@@ -15,7 +15,7 @@ for view in ['cam', 'bev']:
         plt.axis('off')
         os.remove(img)
 
-    outfile = img[:-14] #'_00000_xxx.jpg' = 14 characters
+    outfile = img[:-14] #'_00000_{view}.jpg' = 14 characters
     outfile += f'_{view}'
     # if 'bev' in img:
     #     outfile += '_bev'
@@ -25,5 +25,5 @@ for view in ['cam', 'bev']:
     ani = animation.ArtistAnimation(fig_, frames, interval=200, blit=True,
                                     repeat=False)
     print(f'{outfile}.mp4')
-    ani.save(f'{outfile}_topdownbbox10.mp4')
+    ani.save(f'{outfile}.mp4')
     plt.close()

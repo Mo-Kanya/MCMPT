@@ -43,10 +43,12 @@ class CoordMapper:
 
         self._min_volume = np.asarray([
             self._camera_configs['Space']['MinU'], self._camera_configs['Space']['MinV'],
-            self._camera_configs['Space']['MinW']
+            1600
+            # self._camera_configs['Space']['MinW']
         ])
+        print("@@@@@ ", self._min_volume)
 
-    def projection(self, person_center, camera_id):
+    def projection(self, person_center, camera_id, z=0):
         '''
         project person footpoint in topdown view back to camera coordinate.
 
@@ -56,7 +58,7 @@ class CoordMapper:
         '''
 
         topdown_coords = np.transpose(
-            np.asarray([[person_center['X'], person_center['Y'], 0]]))
+            np.asarray([[person_center['X'], person_center['Y'], z]])) #TODO: experiment with different z-coordinate value for better height estimation
         world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] + self._min_volume[:, np.newaxis]
         uvw = np.linalg.inv(self._camera_parameters[camera_id]['Rotation']) @ (
             world_coord - self._camera_parameters[camera_id]['Translation'][:, np.newaxis])
