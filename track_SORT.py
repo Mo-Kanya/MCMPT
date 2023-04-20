@@ -89,8 +89,7 @@ def detect_and_track(model, log_fpath, data_loader,
                      res_fpath=None, gt_fpath=None, 
                      visualize_topdown=False,
                      visualize_camera=False, 
-                     num_cam=0, camera_intrinsic=None, camera_extrinsic=None,
-                     worldgrid2worldcoord_mat=None,
+                     num_cam=0,
                      coord_mapper=None):
     losses = 0
     precision_s, recall_s = AverageMeter(), AverageMeter()
@@ -157,28 +156,7 @@ def detect_and_track(model, log_fpath, data_loader,
             subplt0.set_axis_off()
             subplt1.set_axis_off()
             plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0.1)
-            # plt.savefig('./vis/map'+ str(batch_idx)+'.jpg')
-            # plt.close(fig)
             
-            if visualize_camera: #added this line just to collapse the comments
-                # # visualizing the heatmap for per-view estimation
-                # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
-                # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
-                # cvgt = criterion._traget_transform(imgs_res[0], imgs_gt[0], data_loader.dataset.img_kernel)
-                # gold_head = cvgt[0, 0].detach().cpu().numpy().squeeze()
-                # gold_head = Image.fromarray((gold_head * 255).astype('uint8'))
-                # gold_foot = cvgt[0, 1].detach().cpu().numpy().squeeze()
-                # gold_foot = Image.fromarray((gold_foot * 255).astype('uint8'))
-                # gold_foot.save('./vis/foot_label' + str(batch_idx) + '.jpg')
-                # gold_head.save('./vis/head_label' + str(batch_idx) + '.jpg')
-                # img0 = denormalize(data[0, 0]).cpu().numpy().squeeze().transpose([1, 2, 0])
-                # img0 = Image.fromarray((img0 * 255).astype('uint8'))
-                # head_cam_result = add_heatmap_to_image(heatmap0_head, img0)
-                # head_cam_result.save('./vis/cam1_head' + str(batch_idx) + '.jpg')
-                # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
-                # foot_cam_result.save('./vis/cam1_foot' + str(batch_idx) + '.jpg')
-                pass
-        
         ## NMS before tracking
         ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, TOP_K)
         # ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, np.inf)
@@ -186,11 +164,8 @@ def detect_and_track(model, log_fpath, data_loader,
         scores = scores[ids[:count]]
         
         ## Pre-process detection results for tracking
-        ## FIXME: arbitrary bounding box created from point with width=10px, height=10px
         detections = []
         for i, (fid, xy, xy_world, score) in enumerate(zip(frame_id, grid_xy, world_xy, scores)):
-            # res[1:] /= dataloader.dataset.world_reduce
-            # res[1:] -= offset[i]
             fid = int(fid.item())
             x, y = xy[0].item(), xy[1].item()
             detections.append(list([x-BBOX_LEN,y-BBOX_LEN,x+BBOX_LEN,y+BBOX_LEN,score.item()]))
@@ -221,17 +196,13 @@ def detect_and_track(model, log_fpath, data_loader,
                 d = d.astype(np.int32)
                 subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%len(colours)]))
                 subplt0.annotate(f"{d[4]}", (d[0], d[1]),color='white',weight='bold',fontsize=10,ha='center',va='center')
-                # subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%32,:]))
                 for cam_id in range(num_cam):
-                    # x_cam, y_cam = project_topdown2camera([d[0],d[1]], cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id], worldgrid2worldcoord_mat)
                     x_cam_bottomleft, y_cam_bottomleft = coord_mapper.projection({'X': d[0] * data_loader.dataset.grid_reduce, 'Y': d[1] * data_loader.dataset.grid_reduce}, cam_id+1, z=PROJ_Z_VAL)
                     x_cam_topright, y_cam_topright = coord_mapper.projection({'X': d[2] * data_loader.dataset.grid_reduce, 'Y': d[3] * data_loader.dataset.grid_reduce}, cam_id+1, z=PROJ_Z_VAL)
                     
                     width = x_cam_topright - x_cam_bottomleft
                     height = y_cam_topright - y_cam_bottomleft
                     
-                    # fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomleft, y_cam_bottomleft),width,height,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
-                    # fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomleft, y_cam_bottomleft),color='white',weight='bold',fontsize=15,ha='center',va='center')
                     fig_cam_subplots[cam_id].add_patch(patches.Rectangle((x_cam_bottomleft, y_cam_bottomleft),width,PERSON_HEIGHT,fill=False,lw=1,ec=colours[d[4]%len(colours)]))
                     fig_cam_subplots[cam_id].annotate(f"{d[4]}", (x_cam_bottomleft, y_cam_bottomleft),color='white',weight='bold',fontsize=10,ha='center',va='center')
                     
@@ -251,26 +222,26 @@ def detect_and_track(model, log_fpath, data_loader,
     t1 = time.time()
     t_epoch = t1 - t0
 
-    if visualize_topdown and visualize_camera:
-    #     fig = plt.figure()
-    #     subplt0 = fig.add_subplot(211, title="output")
-    #     subplt1 = fig.add_subplot(212, title="target")
-    #     subplt0.imshow(map_res.cpu().detach().numpy().squeeze())
-    #     subplt1.imshow(criterion._traget_transform(map_res, map_gt, data_loader.dataset.map_kernel)
-    #                     .cpu().detach().numpy().squeeze())
-        # plt.savefig(os.path.join(logdir, 'map.jpg'))
-        # plt.close(fig)
+    visualize_heatmap = False
+    if visualize_heatmap:
+        fig_heat = plt.figure()
+        subplt0 = fig_heat.add_subplot(211, title="output")
+        subplt1 = fig_heat.add_subplot(212, title="target")
+        subplt0.imshow(map_res.cpu().detach().numpy().squeeze())
+        subplt1.imshow(criterion._traget_transform(map_res, map_gt, data_loader.dataset.map_kernel)
+                        .cpu().detach().numpy().squeeze())
+        plt.savefig(os.path.join(log_fpath, 'map.jpg'))
+        plt.close(fig_heat)
 
-        # # visualizing the heatmap for per-view estimation
-        # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
-        # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
-        # img0 = denormalize(data[0, 0]).cpu().numpy().squeeze().transpose([1, 2, 0])
-        # img0 = Image.fromarray((img0 * 255).astype('uint8'))
-        # head_cam_result = add_heatmap_to_image(heatmap0_head, img0)
-        # head_cam_result.save(os.path.join(logdir, 'cam1_head.jpg'))
-        # foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
-        # foot_cam_result.save(os.path.join(logdir, 'cam1_foot.jpg'))
-        pass
+        # visualizing the heatmap for per-view estimation
+        heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
+        heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
+        img0 = denormalize(data[0, 0]).cpu().numpy().squeeze().transpose([1, 2, 0])
+        img0 = Image.fromarray((img0 * 255).astype('uint8'))
+        head_cam_result = add_heatmap_to_image(heatmap0_head, img0)
+        head_cam_result.save(os.path.join(log_fpath, 'cam1_head.jpg'))
+        foot_cam_result = add_heatmap_to_image(heatmap0_foot, img0)
+        foot_cam_result.save(os.path.join(log_fpath, 'cam1_foot.jpg'))
 
     moda = 0
     if res_fpath is not None and gt_fpath is not None:
@@ -312,56 +283,39 @@ def main(args):
         torch.backends.cudnn.benchmark = True
 
     # dataset
-    normalize = T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-    denormalize = img_color_denormalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-    train_trans = T.Compose([T.Resize([360, 640]), T.ToTensor(), normalize, ])
-    # if 'wildtrack' in args.dataset:
-    #     data_path = os.path.expanduser('../Data/Wildtrack')
-    #     base = Wildtrack(data_path)
-    # elif 'multiviewx' in args.dataset:
-    #     data_path = os.path.expanduser('../Data/MultiviewX')
-    #     base = MultiviewX(data_path)
-    # else:
-    #     raise Exception('must choose from [wildtrack, multiviewx]')
-    # train_set = frameDataset(base, train=True, transform=train_trans, grid_reduce=4)
-    # test_set = frameDataset(base, train=False, transform=train_trans, grid_reduce=4)
-    
-    config_file = "/home/yeojin/MCMPT/multiview_detector/datasets/configs/retail.yaml"
-    # train_set = MMPframeDataset(config_file, train=True, sample_freq=args.sample_freq)
-    # test_set = MMPframeDataset(config_file, train=False, sample_freq=args.sample_freq)
-    test_set = MMPframeDataset(config_file, train=False, sample_freq=args.sample_freq)
-    # test_set = MMPframeDataset(config_file, train=False, sample_freq=args.sample_freq, img_reduce=4)
-    
-    # train_loader = torch.utils.data.DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
-    #                                            num_workers=args.num_workers, pin_memory=True)
+    CFG_FILE = "/home/yeojin/MCMPT/multiview_detector/datasets/configs/retail.yaml"
+    test_set = MMPframeDataset(CFG_FILE, 
+                               train=False, 
+                               world_reduce=args.world_reduce,
+                               sample_freq=args.sample_freq)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False,
                                               num_workers=args.num_workers, pin_memory=True)
     
-    
     if args.detector == 'mvdet':
-        model_path = '/home/kanya/MVDet/logs/MMP_frame/default/ep10/MultiviewDetector.pth'
-        # model_path = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-16_ep5_transfer/MultiviewDetector.pth'
-        # model_path = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-26_03-18-03/MultiviewDetector.pth'
-        model = PerspTransDetector(test_set, args.arch)
-        model.load_state_dict(torch.load(model_path))
+        # MODEL_PATH = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-16_ep5_transfer/MultiviewDetector.pth'
+        # MODEL_PATH = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-26_03-18-03/MultiviewDetector.pth'
+        MODEL_PATH = '/home/kanya/MVDet/logs/MMP_frame/default/ep10/MultiviewDetector.pth' ##current best
+        model = PerspTransDetector(test_set, args.arch).cuda()
+        model.load_state_dict(torch.load(MODEL_PATH))
         model.eval()
     
     elif args.detector == 'mvdetr':
-        model_path = '/home/kanya/MVDeTr/logs/MMP/ep10_wk5/MultiviewDetector.pth'
-        model = MVDeTr(test_set, args.arch, world_feat_arch=args.world_feat,
-                    bottleneck_dim=args.bottleneck_dim, outfeat_dim=args.outfeat_dim, droupout=args.dropout).cuda()
-        model.load_state_dict(torch.load(model_path))
+        MODEL_PATH = '/home/kanya/MVDeTr/logs/MMP/ep10_wk5/MultiviewDetector.pth'
+        model = MVDeTr(test_set, args.arch, 
+                       world_feat_arch=args.world_feat,
+                       bottleneck_dim=args.bottleneck_dim, 
+                       outfeat_dim=args.outfeat_dim, 
+                       droupout=args.dropout).cuda()
+        model.load_state_dict(torch.load(MODEL_PATH))
         model.eval()
     
     print('Test loaded model...')
-    
-    # trainer = PerspectiveTrainer(model, criterion, logdir, denormalize, args.cls_thres, args.alpha)
     
     coordmap = CoordMapper(test_set.calibration_path)
     
     logdir = 'SORT_outputs'
     os.makedirs(logdir, exist_ok=True)
-    logfp = os.path.join(logdir, os.path.basename(os.path.dirname(model_path)))
+    logfp = os.path.join(logdir, os.path.basename(os.path.dirname(MODEL_PATH)))
     
     detect_and_track(model=model, 
                      log_fpath=logfp, 
@@ -371,36 +325,23 @@ def main(args):
                      visualize_topdown=True,
                      visualize_camera=True,
                      num_cam=test_set.num_cam,
-                     camera_intrinsic=test_set.intrinsic_matrices,
-                     camera_extrinsic=test_set.extrinsic_matrices,
-                     worldgrid2worldcoord_mat=test_set.worldgrid2worldcoord_mat,
                      coord_mapper=coordmap)
     
     
 if __name__ == '__main__':
     # settings
-    parser = argparse.ArgumentParser(description='Multiview detector')
+    parser = argparse.ArgumentParser(description='Tracking by detection using MVDet')
     
-    parser.add_argument('--detector', type=str, default='mvdet', choices=['mvdet', 'mvdetr'])
+    parser.add_argument('--detector', type=str, default='mvdetr', choices=['mvdet', 'mvdetr'])
     parser.add_argument('--dataset', type=str, default='MMP', choices=['MMP', 'wildtrack', 'multiviewx'])
     
-    parser.add_argument('--reID', action='store_true')
     parser.add_argument('--cls_thres', type=float, default=0.4)
     parser.add_argument('--arch', type=str, default='resnet18', choices=['vgg11', 'resnet18'])
     parser.add_argument('--alpha', type=float, default=1.0, help='ratio for per view loss')
-    parser.add_argument('--variant', type=str, default='default',
-                        choices=['default', 'img_proj', 'res_proj', 'no_joint_conv'])
     
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--batch_size', type=int, default=1, metavar='N',
                         help='input batch size for training (default: 1)')
-    parser.add_argument('--epochs', type=int, default=10, metavar='N', help='number of epochs to train (default: 10)')
-    parser.add_argument('--lr', type=float, default=0.1, metavar='LR', help='learning rate (default: 0.1)')
-    parser.add_argument('--weight_decay', type=float, default=5e-4)
-    parser.add_argument('--momentum', type=float, default=0.5, metavar='M', help='SGD momentum (default: 0.5)')
-    parser.add_argument('--log_interval', type=int, default=10, metavar='N',
-                        help='how many batches to wait before logging training status')
-    parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--seed', type=int, default=1, help='random seed (default: None)')
     parser.add_argument('--sample_freq', type=int, default=1, help='sample part of frames to save time')
@@ -414,6 +355,7 @@ if __name__ == '__main__':
     parser.add_argument('--world_kernel_size', type=int, default=10)
     parser.add_argument('--img_reduce', type=int, default=12)
     parser.add_argument('--img_kernel_size', type=int, default=10)
+    parser.add_argument('--dropout', type=float, default=0.0)
     
     args = parser.parse_args()
 
