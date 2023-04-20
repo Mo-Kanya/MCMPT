@@ -30,6 +30,8 @@ from multiview_detector.utils.nms import nms
 from multiview_detector.trainer import PerspectiveTrainer
 from multiview_detector.evaluation.evaluate import evaluate
 
+from mvdetr.models.mvdetr import MVDeTr
+
 from SORT.sort import *
 
 from mmp_tracking_helper.mmp_mapping3D_2D_script import *
@@ -85,7 +87,8 @@ def project_topdown2camera(topdown_coords, cam_id, cam_intrinsic, cam_extrinsic,
 
 def detect_and_track(model, log_fpath, data_loader, 
                      res_fpath=None, gt_fpath=None, 
-                     visualize=False, 
+                     visualize_topdown=False,
+                     visualize_camera=False, 
                      num_cam=0, camera_intrinsic=None, camera_extrinsic=None,
                      worldgrid2worldcoord_mat=None,
                      coord_mapper=None):
@@ -107,9 +110,9 @@ def detect_and_track(model, log_fpath, data_loader,
             raise Warning("No gt.txt provided for moda and modp evaluation.")
     
     for batch_idx, (data, map_gt, imgs_gt, frame) in enumerate(data_loader):
-        if frame[0] == 50:
-            exit()
-            #TODO: figure out where OOM is happening
+        # if frame[0] == 50:
+        #     exit()
+        #     #TODO: figure out where OOM is happening
         with torch.no_grad():
             map_res, imgs_res = model(data)
         
@@ -145,18 +148,19 @@ def detect_and_track(model, log_fpath, data_loader,
         precision_s.update(precision)
         recall_s.update(recall)
 
-        if visualize:
-            fig = plt.figure()
+        if visualize_topdown:
+            fig = plt.figure(figsize=(6.4, 4.8))
             subplt0 = fig.add_subplot(121, title=f"output_{batch_idx}")
             subplt1 = fig.add_subplot(122, title=f"target_{batch_idx}")
             subplt0.imshow(map_res.cpu().detach().numpy().squeeze())
             subplt1.imshow(criterion._traget_transform(map_res, map_gt, data_loader.dataset.map_kernel).cpu().detach().numpy().squeeze())
             subplt0.set_axis_off()
             subplt1.set_axis_off()
+            plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0.1)
             # plt.savefig('./vis/map'+ str(batch_idx)+'.jpg')
             # plt.close(fig)
             
-            if visualize: #added this line just to collapse the comments
+            if visualize_camera: #added this line just to collapse the comments
                 # # visualizing the heatmap for per-view estimation
                 # heatmap0_head = imgs_res[0][0, 0].detach().cpu().numpy().squeeze()
                 # heatmap0_foot = imgs_res[0][0, 1].detach().cpu().numpy().squeeze()
@@ -191,13 +195,14 @@ def detect_and_track(model, log_fpath, data_loader,
             x, y = xy[0].item(), xy[1].item()
             detections.append(list([x-BBOX_LEN,y-BBOX_LEN,x+BBOX_LEN,y+BBOX_LEN,score.item()]))
             
-            if visualize:
+            if visualize_camera:
                 ## Prepare camera images
-                fig_cam = plt.figure(figsize=(6.4*2,4.8*2))
+                fig_cam = plt.figure(figsize=(6.4*4, 4.8*3))
+                plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0.05)
                 fig_cam_subplots = []
                 xy_cam = []
                 for cam_id in range(num_cam):
-                    fig_cam_subplots.append(fig_cam.add_subplot(3, 2, cam_id+1, title=f"Camera {cam_id+1}"))
+                    fig_cam_subplots.append(fig_cam.add_subplot(2, 3, cam_id+1, title=f"Camera {cam_id+1}"))
                     # x_cam, y_cam = project_topdown2camera(xy_world, cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id])
                     # xy_cam.append([x_cam, y_cam])
                     
@@ -212,9 +217,10 @@ def detect_and_track(model, log_fpath, data_loader,
         for d in track_bbs_ids:
             ## track_bbs_idx: Nx5 (bb_x, bb_y, bb2_x, bb2_y, track_id)
             print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame[0],d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]))
-            if visualize:
+            if visualize_camera:
                 d = d.astype(np.int32)
                 subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%len(colours)]))
+                subplt0.annotate(f"{d[4]}", (d[0], d[1]),color='white',weight='bold',fontsize=10,ha='center',va='center')
                 # subplt0.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=1,ec=colours[d[4]%32,:]))
                 for cam_id in range(num_cam):
                     # x_cam, y_cam = project_topdown2camera([d[0],d[1]], cam_id, camera_intrinsic[cam_id], camera_extrinsic[cam_id], worldgrid2worldcoord_mat)
@@ -233,19 +239,19 @@ def detect_and_track(model, log_fpath, data_loader,
                     # fig_cam_subplots[cam_id].add_patch(patches.Circle((x_cam_topright, y_cam_topright),10,fill=True,lw=1,ec='white'))
                     # print(f"cam {cam_id} | id {d[4]}: {x_cam}, {y_cam}")
 
-        if visualize:
+        if visualize_topdown:
             topdown_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_bbox{BBOX_LEN}_projz{PROJ_Z_VAL}_' + str(batch_idx).zfill(5) +'_bev.jpg'
             fig.savefig(topdown_filename)
             plt.close(fig)
-            
+        if visualize_camera:    
             cam_filename = log_fpath + f'_nms{NMS_THS}_iou{IOU_THS}_bbox{BBOX_LEN}_projz{PROJ_Z_VAL}_' + str(batch_idx).zfill(5) +'_cam.jpg'
-            fig_cam.savefig(cam_filename, bbox_inches='tight', )
+            fig_cam.savefig(cam_filename, bbox_inches='tight')
             plt.close(fig_cam)
 
     t1 = time.time()
     t_epoch = t1 - t0
 
-    if visualize:
+    if visualize_topdown and visualize_camera:
     #     fig = plt.figure()
     #     subplt0 = fig.add_subplot(211, title="output")
     #     subplt1 = fig.add_subplot(212, title="target")
@@ -331,11 +337,23 @@ def main(args):
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False,
                                               num_workers=args.num_workers, pin_memory=True)
     
-    model_path = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-16_ep5_transfer/MultiviewDetector.pth'
-    # model_path = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-26_03-18-03/MultiviewDetector.pth'
-    model = PerspTransDetector(test_set, args.arch)
-    model.load_state_dict(torch.load(model_path))
-    model.eval()
+    
+    if args.detector == 'mvdet':
+        model_path = '/home/kanya/MVDet/logs/MMP_frame/default/ep10/MultiviewDetector.pth'
+        # model_path = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-16_ep5_transfer/MultiviewDetector.pth'
+        # model_path = '/home/kanya/MVDet/logs/MMP_frame/default/2023-03-26_03-18-03/MultiviewDetector.pth'
+        model = PerspTransDetector(test_set, args.arch)
+        model.load_state_dict(torch.load(model_path))
+        model.eval()
+    
+    elif args.detector == 'mvdetr':
+        model_path = '/home/kanya/MVDeTr/logs/MMP/ep10_wk5/MultiviewDetector.pth'
+        model = MVDeTr(test_set, args.arch, world_feat_arch=args.world_feat,
+                    bottleneck_dim=args.bottleneck_dim, outfeat_dim=args.outfeat_dim, droupout=args.dropout).cuda()
+        model.load_state_dict(torch.load(model_path))
+        model.eval()
+    
+    print('Test loaded model...')
     
     # trainer = PerspectiveTrainer(model, criterion, logdir, denormalize, args.cls_thres, args.alpha)
     
@@ -345,13 +363,13 @@ def main(args):
     os.makedirs(logdir, exist_ok=True)
     logfp = os.path.join(logdir, os.path.basename(os.path.dirname(model_path)))
     
-    print('Test loaded model...')
     detect_and_track(model=model, 
                      log_fpath=logfp, 
                      data_loader=test_loader, 
                      res_fpath=os.path.join(logdir, 'test.txt'), 
                      gt_fpath=test_set.gt_fpath, 
-                     visualize=True,
+                     visualize_topdown=True,
+                     visualize_camera=True,
                      num_cam=test_set.num_cam,
                      camera_intrinsic=test_set.intrinsic_matrices,
                      camera_extrinsic=test_set.extrinsic_matrices,
@@ -362,15 +380,19 @@ def main(args):
 if __name__ == '__main__':
     # settings
     parser = argparse.ArgumentParser(description='Multiview detector')
+    
+    parser.add_argument('--detector', type=str, default='mvdet', choices=['mvdet', 'mvdetr'])
+    parser.add_argument('--dataset', type=str, default='MMP', choices=['MMP', 'wildtrack', 'multiviewx'])
+    
     parser.add_argument('--reID', action='store_true')
     parser.add_argument('--cls_thres', type=float, default=0.4)
+    parser.add_argument('--arch', type=str, default='resnet18', choices=['vgg11', 'resnet18'])
     parser.add_argument('--alpha', type=float, default=1.0, help='ratio for per view loss')
     parser.add_argument('--variant', type=str, default='default',
                         choices=['default', 'img_proj', 'res_proj', 'no_joint_conv'])
-    parser.add_argument('--arch', type=str, default='resnet18', choices=['vgg11', 'resnet18'])
-    parser.add_argument('-d', '--dataset', type=str, default='MMP', choices=['MMP', 'wildtrack', 'multiviewx'])
-    parser.add_argument('-j', '--num_workers', type=int, default=4)
-    parser.add_argument('-b', '--batch_size', type=int, default=1, metavar='N',
+    
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--batch_size', type=int, default=1, metavar='N',
                         help='input batch size for training (default: 1)')
     parser.add_argument('--epochs', type=int, default=10, metavar='N', help='number of epochs to train (default: 10)')
     parser.add_argument('--lr', type=float, default=0.1, metavar='LR', help='learning rate (default: 0.1)')
@@ -382,6 +404,17 @@ if __name__ == '__main__':
     parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--seed', type=int, default=1, help='random seed (default: None)')
     parser.add_argument('--sample_freq', type=int, default=1, help='sample part of frames to save time')
+    
+    ## MVDETR
+    parser.add_argument('--world_feat', type=str, default='deform_trans',
+                        choices=['conv', 'trans', 'deform_conv', 'deform_trans', 'aio'])
+    parser.add_argument('--bottleneck_dim', type=int, default=128)
+    parser.add_argument('--outfeat_dim', type=int, default=0)
+    parser.add_argument('--world_reduce', type=int, default=4)
+    parser.add_argument('--world_kernel_size', type=int, default=10)
+    parser.add_argument('--img_reduce', type=int, default=12)
+    parser.add_argument('--img_kernel_size', type=int, default=10)
+    
     args = parser.parse_args()
 
     main(args)

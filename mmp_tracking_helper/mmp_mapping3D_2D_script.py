@@ -58,7 +58,7 @@ class CoordMapper:
         '''
 
         topdown_coords = np.transpose(
-            np.asarray([[person_center['X'], person_center['Y'], z]])) #TODO: experiment with different z-coordinate value for better height estimation
+            np.asarray([[person_center['X'], person_center['Y'], z]]))
         world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] + self._min_volume[:, np.newaxis]
         uvw = np.linalg.inv(self._camera_parameters[camera_id]['Rotation']) @ (
             world_coord - self._camera_parameters[camera_id]['Translation'][:, np.newaxis])
