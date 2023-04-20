@@ -133,10 +133,11 @@ class PerspectiveTrainer(BaseTrainer):
             positions, scores = xys[:, :, :2], xys[:, :, 2:3]
             ids = scores.squeeze() > self.cls_thres
             pos, s = positions[0, ids], scores[0, ids, 0]
-            ids, count = nms(pos, s, 12, top_k=500)
+            ids, count = nms(pos, s, 12.5, top_k=np.inf)
             count = min(count, 20)
-            ids = ids[:count]
-            ids = torch.stack([ids % 212, ids // 212]).T
+            ids = pos[ids[:count]]/2.  # [::-1, :]
+            # ids = torch.stack([ids[:, 1], ids[:, 0]], dim=-1)
+            # ids = torch.stack([ids % 212, ids // 212]).T
 
             xys_gt = sim_decode(world_gt["heatmap"] == torch.max(world_gt["heatmap"])).detach().cpu()
             positions_gt, scores_gt = xys_gt[:, :, :2], xys_gt[:, :, 2:3]

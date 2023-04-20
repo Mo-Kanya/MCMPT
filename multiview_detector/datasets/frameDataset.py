@@ -67,7 +67,7 @@ class frameDataset(VisionDataset):
         self.semi_supervised = semi_supervised * train
         self.dropout = dropout
         self.transform = T.Compose([T.ToTensor(), T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-                                    T.Resize((np.array(self.img_shape) * 8 // self.img_reduce).tolist())])
+                                    T.Resize((np.array(self.img_shape) * 4 // self.img_reduce).tolist())])
         self.augmentation = augmentation
         self.Rworld_shape = list(map(lambda x: x // self.world_reduce, self.worldgrid_shape))
         self.Rimg_shape = np.ceil(np.array(self.img_shape) / self.img_reduce).astype(int).tolist()
