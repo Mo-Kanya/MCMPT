@@ -210,6 +210,31 @@ class PerspectiveTrainer(BaseTrainer):
 
         return losses / len(dataloader), moda
 
+    def inference(self, data, world_gt, imgs_gt, affine_mats, frame, world_reduce):
+        self.model.eval()
+        
+        B, N = imgs_gt['heatmap'].shape[:2]
+        data = data.cuda()
+        for key in imgs_gt.keys():
+            imgs_gt[key] = imgs_gt[key].view([B * N] + list(imgs_gt[key].shape)[2:])
+        
+        with torch.no_grad():
+            (world_heatmap, world_offset), (imgs_heatmap, imgs_offset, imgs_wh) = self.model(data, affine_mats)
+        
+        xys = mvdet_decode(torch.sigmoid(world_heatmap.detach().cpu()), world_offset.detach().cpu(),
+                               reduce=world_reduce)
+        positions, scores = xys[:, :, :2], xys[:, :, 2:3]
+        ids = scores.squeeze() > self.cls_thres
+        pos, s = positions[0, ids], scores[0, ids, 0]
+        ids, count = nms(pos, s, 12.5, top_k=np.inf)
+        count = min(count, 20)
+        import pdb; pdb.set_trace()
+        ids = pos[ids[:count]] / 2.  # [::-1, :]
+        # ids = torch.stack([ids[:, 1], ids[:, 0]], dim=-1)
+        # ids = torch.stack([ids % 212, ids // 212]).T
+        
+        return positions, ids, count
+    
     def process_pseudo_gt(self, img_res):
         imgs_heatmap, imgs_offset, imgs_wh, imgs_id = img_res
         imgs_detections = ctdet_decode(imgs_heatmap, imgs_offset, imgs_wh, imgs_id)

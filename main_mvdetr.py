@@ -61,7 +61,8 @@ def main(args):
     #                         img_reduce=args.img_reduce, world_kernel_size=args.world_kernel_size,
     #                         img_kernel_size=args.img_kernel_size)
 
-    config_file = "/home/kanya/MVDet/multiview_detector/datasets/configs/retail.yaml"
+    # config_file = "/home/kanya/MVDet/multiview_detector/datasets/configs/retail.yaml"
+    config_file = "/home/kanyamo/MVDeTr/multiview_detector/datasets/configs/retail.yaml"
     train_set = MMPframeDataset(config_file, train=True, world_reduce=args.world_reduce,
                                 img_reduce=args.img_reduce, world_kernel_size=args.world_kernel_size,
                                 img_kernel_size=args.img_kernel_size, sample_freq=args.sample_freq,
@@ -174,7 +175,7 @@ if __name__ == '__main__':
     parser.add_argument('-b', '--batch_size', type=int, default=1, help='input batch size for training')
     parser.add_argument('--dropout', type=float, default=0.0)
     parser.add_argument('--dropcam', type=float, default=0.0)
-    parser.add_argument('--epochs', type=int, default=10, help='number of epochs to train')
+    parser.add_argument('--epochs', type=int, default=1, help='number of epochs to train')
     parser.add_argument('--lr', type=float, default=5e-4, help='learning rate')
     parser.add_argument('--base_lr_ratio', type=float, default=0.1)
     parser.add_argument('--weight_decay', type=float, default=1e-4)
