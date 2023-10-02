@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 def get_gt(Rshape, x_s, y_s, w_s=None, h_s=None, v_s=None, reduce=4, top_k=100, kernel_size=4):
     H, W = Rshape
     heatmap = np.zeros([1, H, W], dtype=np.float32)
-    reg_mask = np.zeros([top_k], dtype=np.bool)
+    reg_mask = np.zeros([top_k], dtype=bool)
     idx = np.zeros([top_k], dtype=np.int64)
     pid = np.zeros([top_k], dtype=np.int64)
     offset = np.zeros([top_k, 2], dtype=np.float32)
@@ -60,6 +60,7 @@ class frameDataset(VisionDataset):
         self.num_cam, self.num_frame = base.num_cam, base.num_frame
         # world (grid) reduce: on top of the 2.5cm grid
         self.reID, self.top_k = reID, top_k
+
         # reduce = input/output
         self.world_reduce, self.img_reduce = world_reduce, img_reduce
         self.img_shape, self.worldgrid_shape = base.img_shape, base.worldgrid_shape  # H,W; N_row,N_col
@@ -252,6 +253,7 @@ class MMPframeDataset(VisionDataset):
         super().__init__(root)
         env = config["env_name"]
         self.top_k = top_k
+        self.get_raw = False
         self.calibration_path = os.path.join(root, f"calibrations/{env}/calibrations.json")
         self.image_path = os.path.join(root, "images/")
         self.label_path = os.path.join(root, "labels/")
@@ -265,6 +267,8 @@ class MMPframeDataset(VisionDataset):
         self.semi_supervised = 0
         self.transform = T.Compose([T.ToTensor(), T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
                                     T.Resize((np.array(self.img_shape) * 4 // self.img_reduce).tolist())])
+        self.raw_transform = T.Compose([T.ToTensor(),
+                   T.Resize((np.array(self.img_shape) * 4 // self.img_reduce).tolist())])
         self.dropout = dropout
         self.worldgrid_shape = config["grid_size"]
         self.Rworld_shape = list(map(lambda x: int(x / self.world_reduce), self.worldgrid_shape))
@@ -348,14 +352,18 @@ class MMPframeDataset(VisionDataset):
                 break
 
         imgs = []
+        raws = []
         imgs_gt = []
         affine_mats = []
         for cam in range(1, self.num_cam+1):
             fpath = os.path.join(self.image_path, img_dir, 'rgb_' + str(new_index).zfill(5) + '_' + str(cam) + '.jpg')
             img = Image.open(fpath).convert('RGB')
+            raws.append(self.raw_transform(img))
+            # print("In dataset, ", self.transform)
             if self.transform is not None:
                 img = self.transform(img)
             imgs.append(img)
+            # raws.append(img)
 
             label = json.load(
                 open(os.path.join(self.label_path, img_dir, 'rgb_' + str(new_index).zfill(5) + '_' + str(cam) + '.json'))
@@ -407,6 +415,9 @@ class MMPframeDataset(VisionDataset):
                             reduce=self.world_reduce, top_k=self.top_k, kernel_size=self.world_kernel_size)
             # if self.target_transform is not None:
             #     map_gt = self.target_transform(map_gt)
+        if self.get_raw:
+            raws = torch.stack(raws)
+            return imgs, map_gt, imgs_gt, affine_mats, new_index, raws
         return imgs, map_gt, imgs_gt, affine_mats, new_index
 
 
