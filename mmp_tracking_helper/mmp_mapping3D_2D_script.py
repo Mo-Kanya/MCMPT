@@ -46,7 +46,25 @@ class CoordMapper:
             self._camera_configs['Space']['MinW']
         ])
 
-    def projection(self, person_center, camera_id):
+    # def projection(self, person_center, camera_id):
+    #     '''
+    #     project person footpoint in topdown view back to camera coordinate.
+
+    #     Arguments:
+    #         camera_id: str, id of camera.
+    #         person_center: X and Y coordinates of person in topdown view.
+    #     '''
+
+    #     topdown_coords = np.transpose(
+    #         np.asarray([[person_center['X'], person_center['Y'], 0]]))
+    #     world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] + self._min_volume[:, np.newaxis]
+    #     uvw = np.linalg.inv(self._camera_parameters[camera_id]['Rotation']) @ (
+    #         world_coord - self._camera_parameters[camera_id]['Translation'][:, np.newaxis])
+    #     pixel_coords = uvw / self._camera_parameters[camera_id]['FInv'][:, np.newaxis] / uvw[
+    #         2, :] + self._camera_parameters[camera_id]['C'][:, np.newaxis]
+    #     return pixel_coords[0][0], pixel_coords[1][0]
+
+    def projection(self, person_center, camera_id, body_offset):
         '''
         project person footpoint in topdown view back to camera coordinate.
 
@@ -57,13 +75,16 @@ class CoordMapper:
 
         topdown_coords = np.transpose(
             np.asarray([[person_center['X'], person_center['Y'], 0]]))
-        world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] + self._min_volume[:, np.newaxis]
-        uvw = np.linalg.inv(self._camera_parameters[camera_id]['Rotation']) @ (
-            world_coord - self._camera_parameters[camera_id]['Translation'][:, np.newaxis])
-        pixel_coords = uvw / self._camera_parameters[camera_id]['FInv'][:, np.newaxis] / uvw[
-            2, :] + self._camera_parameters[camera_id]['C'][:, np.newaxis]
-        return pixel_coords[0][0], pixel_coords[1][0]
+        body_offset = np.transpose(np.asarray([body_offset]))
+        world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] \
+                      + body_offset + self._min_volume[:, np.newaxis]
 
+        uvw = np.linalg.inv(self._camera_parameters[camera_id]['Rotation']) @ (
+                world_coord - self._camera_parameters[camera_id]['Translation'][:, np.newaxis])
+        pixel_coords = uvw / self._camera_parameters[camera_id]['FInv'][:, np.newaxis] / uvw[
+                                                                                         2, :] + \
+                       self._camera_parameters[camera_id]['C'][:, np.newaxis]
+        return pixel_coords[0][0], pixel_coords[1][0]
 
 class DataReader:
     def __init__(self, image_dir, label_dir, num_cam) -> None:

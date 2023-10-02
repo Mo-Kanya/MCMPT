@@ -11,6 +11,9 @@ import torch
 from torch import optim
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
+from PIL import Image
+from matplotlib import pyplot as plt
+plt.axis('off')
 
 from multiview_detector.datasets import *
 from multiview_detector.models.mvdetr import MVDeTr
@@ -25,6 +28,7 @@ from deep_sort import nn_matching
 from deep_sort.tracker import Tracker
 from deep_sort.utils import visualization
 from deep_sort.detection import Detection
+from deep_sort.generate_detections import create_box_encoder
 
 from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 
@@ -68,6 +72,8 @@ def main(args):
     test_set = MMPframeDataset(config_file, train=False, world_reduce=args.world_reduce,
                                img_reduce=args.img_reduce, world_kernel_size=args.world_kernel_size,
                                img_kernel_size=args.img_kernel_size, sample_freq=args.sample_freq)
+    train_set.get_raw = True
+    test_set.get_raw = True
     num_cam = train_set.num_cam
     
     def seed_worker(worker_id):
@@ -104,11 +110,12 @@ def main(args):
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", args.max_cosine_distance, args.nn_budget)
     tracker = Tracker(metric)
+    encoder = create_box_encoder(args.encoder, batch_size=args.batch_size)
     print('Loaded tracking model...')
     
     coord_mapper = CoordMapper(test_set.calibration_path)
     
-    for batch_idx, (data, map_gt, imgs_gt, affine_mats, frame) in enumerate(train_loader):
+    for batch_idx, (data, world_gt, imgs_gt, affine_mats, frame, raw_data) in enumerate(train_loader):
         data = data.cuda()
         with torch.no_grad():
             (world_heatmap, world_offset), \
@@ -124,30 +131,44 @@ def main(args):
         count = min(count, 20)
         ids = pos[ids[:count]]/2.  # [::-1, :]
         
-        ## project back to camera frames
-        for cam_id in range(num_cam):
-            bev_det = []
+        detections = []
+        
+        if len(ids) > 0:
+            features = []
             for bbox in pos:
-                bbox = bbox.astype(np.int32)
+                bbox = bbox.to(int)
                 foot_point = {'X': bbox[0] * train_loader.dataset.world_reduce,
                                 'Y': bbox[1] * train_loader.dataset.world_reduce}
                 x_raw, y_raw = [], []
-                for offset in [[BODY_WIDTH, BODY_WIDTH, 0], [-BODY_WIDTH, -BODY_WIDTH, 0],
-                                [BODY_WIDTH, -BODY_WIDTH, 0], [-BODY_WIDTH, BODY_WIDTH, 0],
-                                [BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT],
-                                [BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT]]:
-                    x_cam, y_cam = coord_mapper.projection(foot_point, cam_id+1, body_offset=offset)
-                    x_raw.append(x_cam)
-                    y_raw.append(y_cam)
-                l, r = min(x_raw), max(x_raw)
-                b, t = min(y_raw), max(y_raw)
-                bev_det.append(np.array([l, b, r, t]))
-        
-        ## aggregate features of multiple views
+
+                ## project back to camera frames
+                projected_bbox = []
+                for cam_id in range(num_cam):
+                    for offset in [[BODY_WIDTH, BODY_WIDTH, 0], [-BODY_WIDTH, -BODY_WIDTH, 0],
+                                    [BODY_WIDTH, -BODY_WIDTH, 0], [-BODY_WIDTH, BODY_WIDTH, 0],
+                                    [BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT],
+                                    [BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT]]:
+                        x_cam, y_cam = coord_mapper.projection(foot_point, cam_id+1, body_offset=offset)
+                        x_raw.append(x_cam)
+                        y_raw.append(y_cam)
+                    l, r = min(x_raw), max(x_raw)
+                    b, t = min(y_raw), max(y_raw)
+                    w, h = r-l, t-b
+                    
+                    projected_bbox.append(np.array([l, b, w, h]))
+                projected_bbox = np.array(projected_bbox)
+                
+                ## extract features
+                cam_image = raw_data[0][cam_id].permute(1,2,0).detach().cpu().numpy()
+                bbox_features = encoder(cam_image, projected_bbox.copy())
+                
+                ## aggregate features of multiple views
+                mean_feature = np.mean(bbox_features, axis=0)
+                features.append(mean_feature)
         
         ## preprocess for tracker
-        detections = []
-        for (xy, id, score) in zip(pos, ids, s):
+        assert len(s) == len(pos) == len(features)
+        for (xy, id, score, feature) in zip(pos, ids, s, features):
             detections.append(Detection(xy, score, feature))
         
         tracker.predict()
@@ -182,14 +203,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Multiview detector')
     
     # trainer
-    parser.add_argument('--cls_thres', type=float, default=0.4)
+    parser.add_argument('--cls_thres', type=float, default=0.01)
+    # parser.add_argument('--cls_thres', type=float, default=0.4)
     parser.add_argument('--alpha', type=float, default=1.0, help='ratio for per view loss')
     parser.add_argument('--use_mse', type=str2bool, default=False)
     parser.add_argument('--id_ratio', type=float, default=0)
     
     # dataset
     parser.add_argument('--configfile', type=str, 
-                        default='/home/kanyamo/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
+                        default='/home/kanya/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
+                        # default='/home/kanyamo/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
     parser.add_argument('-d', '--dataset', type=str, default='MMP', choices=['MMP'])
     parser.add_argument('--world_reduce', type=int, default=2)
     parser.add_argument('--world_kernel_size', type=int, default=5)
@@ -201,7 +224,9 @@ def parse_args():
     
     # model
     parser.add_argument('--arch', type=str, default='resnet18', choices=['vgg11', 'resnet18', 'mobilenet'])
-    parser.add_argument('--detection_model_path_home', type=str, default='/home/kanyamo/MVDeTr/logs/MMP')
+    parser.add_argument('--detection_model_path_home', type=str, 
+                        default='/home/kanya/MVDeTr/logs/MMP')
+                        # default='/home/kanyamo/MVDeTr/logs/MMP')
     parser.add_argument('--resume', type=str, default="aug_deform_trans_lr0.0005_baseR0.1_neck128_out0_alpha1.0_id0_drop0.0_dropcam0.0_worldRK2_5_imgRK4_10_2023-04-12_20-59-36")
     parser.add_argument('--world_feat', type=str, default='deform_trans',
                         choices=['conv', 'trans', 'deform_conv', 'deform_trans', 'aio'])
@@ -228,6 +253,7 @@ def parse_args():
     parser.add_argument('--logdir', type=str, default='./logs_deepsort')
     
     # DeepSORT
+    parser.add_argument('--encoder', type=str, default='./deep_sort/mars-small128.pb')
     parser.add_argument(
         "--max_cosine_distance", help="Gating threshold for cosine distance "
         "metric (object appearance).", type=float, default=0.2)
