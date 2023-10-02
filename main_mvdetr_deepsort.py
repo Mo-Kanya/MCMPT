@@ -26,9 +26,12 @@ from deep_sort.tracker import Tracker
 from deep_sort.utils import visualization
 from deep_sort.detection import Detection
 
+from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 
 NMS_THS = 12
 TOP_K = 500
+BODY_HEIGHT = 1600
+BODY_WIDTH = 150
 
 def main(args):
     # check if in debug mode
@@ -65,6 +68,7 @@ def main(args):
     test_set = MMPframeDataset(config_file, train=False, world_reduce=args.world_reduce,
                                img_reduce=args.img_reduce, world_kernel_size=args.world_kernel_size,
                                img_kernel_size=args.img_kernel_size, sample_freq=args.sample_freq)
+    num_cam = train_set.num_cam
     
     def seed_worker(worker_id):
         worker_seed = torch.initial_seed() % 2 ** 32
@@ -91,7 +95,8 @@ def main(args):
     )
     detector = MVDeTr(train_set, args.arch, world_feat_arch=args.world_feat,
                    bottleneck_dim=args.bottleneck_dim, outfeat_dim=args.outfeat_dim, 
-                   droupout=args.dropout).cuda()
+                   droupout=args.dropout)
+    detector.cuda()
     detector.load_state_dict(torch.load(detector_path))
     detector.eval()
     print('Loaded detection model...')
@@ -100,6 +105,8 @@ def main(args):
         "cosine", args.max_cosine_distance, args.nn_budget)
     tracker = Tracker(metric)
     print('Loaded tracking model...')
+    
+    coord_mapper = CoordMapper(test_set.calibration_path)
     
     for batch_idx, (data, map_gt, imgs_gt, affine_mats, frame) in enumerate(train_loader):
         data = data.cuda()
@@ -118,6 +125,23 @@ def main(args):
         ids = pos[ids[:count]]/2.  # [::-1, :]
         
         ## project back to camera frames
+        for cam_id in range(num_cam):
+            bev_det = []
+            for bbox in pos:
+                bbox = bbox.astype(np.int32)
+                foot_point = {'X': bbox[0] * train_loader.dataset.world_reduce,
+                                'Y': bbox[1] * train_loader.dataset.world_reduce}
+                x_raw, y_raw = [], []
+                for offset in [[BODY_WIDTH, BODY_WIDTH, 0], [-BODY_WIDTH, -BODY_WIDTH, 0],
+                                [BODY_WIDTH, -BODY_WIDTH, 0], [-BODY_WIDTH, BODY_WIDTH, 0],
+                                [BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT],
+                                [BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT]]:
+                    x_cam, y_cam = coord_mapper.projection(foot_point, cam_id+1, body_offset=offset)
+                    x_raw.append(x_cam)
+                    y_raw.append(y_cam)
+                l, r = min(x_raw), max(x_raw)
+                b, t = min(y_raw), max(y_raw)
+                bev_det.append(np.array([l, b, r, t]))
         
         ## aggregate features of multiple views
         
