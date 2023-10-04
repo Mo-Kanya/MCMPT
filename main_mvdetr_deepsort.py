@@ -2,7 +2,7 @@ import os
 import sys
 import shutil
 import argparse
-import datetime
+from datetime import datetime
 import random
 from distutils.dir_util import copy_tree
 
@@ -13,6 +13,7 @@ from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 from PIL import Image
 from matplotlib import pyplot as plt
+import matplotlib.patches as patches
 plt.axis('off')
 
 from multiview_detector.datasets import *
@@ -32,8 +33,6 @@ from deep_sort.generate_detections import create_box_encoder
 
 from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 
-NMS_THS = 12
-TOP_K = 500
 BODY_HEIGHT = 1600
 BODY_WIDTH = 150
 
@@ -88,10 +87,13 @@ def main(args):
                              num_workers=args.num_workers,
                              pin_memory=True, worker_init_fn=seed_worker)
     
-    logdir = args.logdir
-    os.makedirs(logdir, exist_ok=True)
+    date_time = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+    outdir = os.path.join(args.outdir, date_time)
+    os.makedirs(outdir, exist_ok=True)
     print('Settings:')
     print(vars(args))
+    with open(os.path.join(outdir, "settings.json"), "w") as f:
+        f.write(json.dumps(vars(args), indent=4))
     
     # detection_model
     detector_path = os.path.join(
@@ -114,6 +116,8 @@ def main(args):
     print('Loaded tracking model...')
     
     coord_mapper = CoordMapper(test_set.calibration_path)
+    if args.visualize:
+        colours = np.random.rand(32, 3)
     
     for batch_idx, (data, world_gt, imgs_gt, affine_mats, frame, raw_data) in enumerate(train_loader):
         data = data.cuda()
@@ -127,18 +131,26 @@ def main(args):
         positions, scores = xys[:, :, :2], xys[:, :, 2:3]
         ids = scores.squeeze() > args.cls_thres
         pos, s = positions[0, ids], scores[0, ids, 0]
-        ids, count = nms(pos, s, 12.5, top_k=np.inf)
+        ids, count = nms(pos, s, args.nms_ths, args.top_k)
+        # ids, count = nms(pos, s, 12.5, top_k=np.inf)
         count = min(count, 20)
-        ids = pos[ids[:count]]/2.  # [::-1, :]
+        grid_xy = pos[ids[:count]] / 2.
+        scores = s[ids[:count]]
+        # ids = pos[ids[:count]]/2.  # [::-1, :]
+        
+        # ids, count = nms(grid_xy.float(), scores[:,0], NMS_THS, TOP_K)
+        # grid_xy = grid_xy[ids[:count], :]
+        # scores = scores[ids[:count]]
         
         detections = []
         
+        features = []
         if len(ids) > 0:
-            features = []
-            for bbox in pos:
-                bbox = bbox.to(int)
-                foot_point = {'X': bbox[0] * train_loader.dataset.world_reduce,
-                                'Y': bbox[1] * train_loader.dataset.world_reduce}
+            print("@@@ detected!")
+            for xy in grid_xy:
+                xy = xy.to(int)
+                foot_point = {'X': xy[0] * train_loader.dataset.world_reduce,
+                                'Y': xy[1] * train_loader.dataset.world_reduce}
                 x_raw, y_raw = [], []
 
                 ## project back to camera frames
@@ -167,12 +179,57 @@ def main(args):
                 features.append(mean_feature)
         
         ## preprocess for tracker
-        assert len(s) == len(pos) == len(features)
-        for (xy, id, score, feature) in zip(pos, ids, s, features):
-            detections.append(Detection(xy, score, feature))
+        assert len(scores) == len(grid_xy) == len(features)
+        for (xy, id, score, feature) in zip(grid_xy, ids, scores, features):
+            x, y = xy[0].item(), xy[1].item()
+            bbox = [x-args.bbox_len, y-args.bbox_len, x+args.bbox_len, y+args.bbox_len]
+            detections.append(Detection(bbox, score, feature))
         
         tracker.predict()
         tracker.update(detections)
+        
+        fig_cam = plt.figure(figsize=(6.4 * 4, 4.8 * 3))
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0.05)
+        fig_cam_subplots = []
+        for cam_id in range(num_cam):
+            fig_cam_subplots.append(fig_cam.add_subplot(2, num_cam//2, cam_id + 1, title=f"Camera {cam_id + 1}"))
+            img_cam = raw_data[0][cam_id].permute(1, 2, 0).detach().cpu().numpy()
+            fig_cam_subplots[cam_id].imshow(img_cam)
+            fig_cam_subplots[cam_id].set_axis_off()
+        
+        for cam_id in range(num_cam):
+            for track in tracker.tracks:
+                if not track.is_confirmed() or track.time_since_update > 1:
+                    continue
+                
+                bbox = track.to_tlwh()
+                track_id = track.track_id
+                
+                foot_point = {'X': bbox[0] * train_loader.dataset.world_reduce,
+                                'Y': bbox[1] * train_loader.dataset.world_reduce}
+                x_raw, y_raw = [], []
+                
+                for offset in [[BODY_WIDTH, BODY_WIDTH, 0], [-BODY_WIDTH, -BODY_WIDTH, 0],
+                                [BODY_WIDTH, -BODY_WIDTH, 0], [-BODY_WIDTH, BODY_WIDTH, 0],
+                                [BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT],
+                                [BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT]]:
+                    x_cam, y_cam = coord_mapper.projection(foot_point, cam_id+1, body_offset=offset)
+                    x_raw.append(x_cam)
+                    y_raw.append(y_cam)
+                l, r = min(x_raw), max(x_raw)
+                b, t = min(y_raw), max(y_raw)
+                w, h = r-l, t-b
+                print(l ,b, w, h)
+                
+                fig_cam_subplots[cam_id].add_patch(
+                    patches.Rectangle((l, b), w, h, fill=False, lw=1, ec=colours[track_id % len(colours)]))
+                fig_cam_subplots[cam_id].annotate(f"{track_id}", (l, b), color='white',
+                                                    weight='bold', fontsize=10, ha='center', va='center')
+
+        cam_filename = os.path.join(outdir, str(batch_idx).zfill(5) + '_cam.jpg')
+        fig_cam.savefig(cam_filename, bbox_inches='tight')
+        plt.close(fig_cam)
+        print(f"saved to {cam_filename}")
         
         # with torch.no_grad():
             # map_res, imgs_res = detector(data, affine_mats)
@@ -203,8 +260,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Multiview detector')
     
     # trainer
-    parser.add_argument('--cls_thres', type=float, default=0.01)
-    # parser.add_argument('--cls_thres', type=float, default=0.4)
+    # parser.add_argument('--cls_thres', type=float, default=0.01) #debug purpose
+    parser.add_argument('--cls_thres', type=float, default=0.4)
     parser.add_argument('--alpha', type=float, default=1.0, help='ratio for per view loss')
     parser.add_argument('--use_mse', type=str2bool, default=False)
     parser.add_argument('--id_ratio', type=float, default=0)
@@ -242,7 +299,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=1, help='number of epochs to train')
 
     # config
-    parser.add_argument('--visualize', action='store_true')
+    parser.add_argument('--visualize', action='store_true', default=True)
     parser.add_argument('--seed', type=int, default=2021, help='random seed')
     parser.add_argument('--deterministic', type=str2bool, default=False)
     parser.add_argument('--augmentation', type=str2bool, default=True)
@@ -250,7 +307,12 @@ def parse_args():
     # misc
     parser.add_argument('--reID', action='store_true')
     parser.add_argument('--dropcam', type=float, default=0.0)
-    parser.add_argument('--logdir', type=str, default='./logs_deepsort')
+    parser.add_argument('--outdir', type=str, default='./deepsort_outputs')
+    
+    # post-processing
+    parser.add_argument('--nms_ths', type=float, default=12)
+    parser.add_argument('--top_k', type=int, default=50)
+    parser.add_argument('--bbox_len', type=int, default=5)
     
     # DeepSORT
     parser.add_argument('--encoder', type=str, default='./deep_sort/mars-small128.pb')
