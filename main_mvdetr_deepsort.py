@@ -131,7 +131,7 @@ def main(args):
         positions, scores = xys[:, :, :2], xys[:, :, 2:3]
         ids = scores.squeeze() > args.cls_thres
         pos, s = positions[0, ids], scores[0, ids, 0]
-        ids, count = nms(pos, s, args.nms_ths, args.top_k)
+        ids, count = nms(pos, s, args.nms_ths, np.inf)
         # ids, count = nms(pos, s, 12.5, top_k=np.inf)
         count = min(count, 20)
         grid_xy = pos[ids[:count]] / 2.
@@ -261,7 +261,7 @@ def parse_args():
     
     # trainer
     # parser.add_argument('--cls_thres', type=float, default=0.01) #debug purpose
-    parser.add_argument('--cls_thres', type=float, default=0.4)
+    parser.add_argument('--cls_thres', type=float, default=0.1)
     parser.add_argument('--alpha', type=float, default=1.0, help='ratio for per view loss')
     parser.add_argument('--use_mse', type=str2bool, default=False)
     parser.add_argument('--id_ratio', type=float, default=0)
@@ -275,7 +275,7 @@ def parse_args():
     parser.add_argument('--world_kernel_size', type=int, default=5)
     parser.add_argument('--img_reduce', type=int, default=4)
     parser.add_argument('--img_kernel_size', type=int, default=10)
-    parser.add_argument('--sample_freq', type=int, default=5, help='sample part of frames to save time')
+    parser.add_argument('--sample_freq', type=int, default=3, help='sample part of frames to save time')
     parser.add_argument('-b', '--batch_size', type=int, default=1, help='input batch size for training')
     parser.add_argument('-j', '--num_workers', type=int, default=4)
     
@@ -310,8 +310,8 @@ def parse_args():
     parser.add_argument('--outdir', type=str, default='./deepsort_outputs')
     
     # post-processing
-    parser.add_argument('--nms_ths', type=float, default=12)
-    parser.add_argument('--top_k', type=int, default=50)
+    parser.add_argument('--nms_ths', type=float, default=20)
+    # parser.add_argument('--top_k', type=int, default=50)
     parser.add_argument('--bbox_len', type=int, default=5)
     
     # DeepSORT
