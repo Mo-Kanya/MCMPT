@@ -15,6 +15,8 @@ from PIL import Image
 from matplotlib import pyplot as plt
 import matplotlib.patches as patches
 plt.axis('off')
+from ultralytics import YOLO
+from scipy.optimize import linear_sum_assignment
 
 from multiview_detector.datasets import *
 from multiview_detector.models.mvdetr import MVDeTr
@@ -35,6 +37,35 @@ from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 
 BODY_HEIGHT = 1600
 BODY_WIDTH = 150
+
+def compute_iou(boxes1, boxes2):
+    """
+    Input:
+        boxes1: Nx4 ndarray, representing N bounding boxes coordinates
+        boxes2: Nx4 ndarray, representing N bounding boxes coordinates
+    Output:
+        iou_mat: NxM ndarray, with iou_mat[i, j] = iou(boxes1[i], boxes2[j])
+    """
+    N = boxes1.shape[0]
+    M = boxes2.shape[0]
+    iou_mat = np.zeros((N, M))
+    box2areas = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    # print( box2areas.shape)
+
+    for i in range(N):
+        box1 = boxes1[i]
+
+        Iwidth = np.minimum(box1[2], boxes2[:, 2]) - np.maximum(box1[0], boxes2[:, 0])
+        Iwidth = np.maximum(Iwidth, 0)
+        Iheight = np.minimum(box1[3], boxes2[:, 3]) - np.maximum(box1[1], boxes2[:, 1])
+        Iheight = np.maximum(Iheight, 0)
+        I = Iwidth * Iheight
+
+        U = (box1[2] - box1[0]) * (box1[3] - box1[1]) + box2areas - I
+
+        iou_mat[i, :] = I / U
+
+    return iou_mat
 
 def main(args):
     # check if in debug mode
@@ -109,6 +140,8 @@ def main(args):
     detector.eval()
     print('Loaded detection model...')
     
+    yolo = YOLO('yolov8n.pt').to("cuda")
+    
     metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", args.max_cosine_distance, args.nn_budget)
     tracker = Tracker(metric)
@@ -119,12 +152,14 @@ def main(args):
     if args.visualize:
         colours = np.random.rand(32, 3)
     
-    for batch_idx, (data, world_gt, imgs_gt, affine_mats, frame, raw_data) in enumerate(train_loader):
+    for batch_idx, (data, world_gt, imgs_gt, affine_mats, frame, raw_data) in enumerate(test_loader):
         data = data.cuda()
         with torch.no_grad():
             (world_heatmap, world_offset), \
             (imgs_heatmap, imgs_offset, imgs_wh) = detector(data, affine_mats)
-        
+            cam_det_results = yolo(raw_data[0])
+            
+        ## post-processing
         xys = mvdet_decode(torch.sigmoid(world_heatmap.detach().cpu()), 
                            world_offset.detach().cpu(),
                            reduce=train_loader.dataset.world_reduce)
@@ -142,15 +177,37 @@ def main(args):
         # grid_xy = grid_xy[ids[:count], :]
         # scores = scores[ids[:count]]
         
+        cam_dets = []
+        for cam_id, cam_det_res in enumerate(cam_det_results):
+            bboxes = cam_det_res.boxes.xyxy.cpu().numpy()
+            cats = cam_det_res.boxes.cls.cpu().numpy()
+            cam_dets.append(bboxes[cats == 0])
+        
         detections = []
         
         features = []
         if len(ids) > 0:
+            
+            
+            
+            
+            ## DEBUGGING
+            fig_cam = plt.figure(figsize=(6.4 * 4, 4.8 * 3))
+            plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0.05)
+            fig_cam_subplots = []
+            for cam_id in range(num_cam):
+                fig_cam_subplots.append(fig_cam.add_subplot(2, num_cam//2, cam_id + 1, title=f"Camera {cam_id + 1}"))
+                img_cam = raw_data[0][cam_id].permute(1, 2, 0).detach().cpu().numpy()
+                fig_cam_subplots[cam_id].imshow(img_cam)
+                fig_cam_subplots[cam_id].set_axis_off()
+                    
+                    
+                   
             print("@@@ detected!")
             for xy in grid_xy:
                 xy = xy.to(int)
-                foot_point = {'X': xy[0] * train_loader.dataset.world_reduce,
-                                'Y': xy[1] * train_loader.dataset.world_reduce}
+                foot_point = {'X': xy[0].item() * train_loader.dataset.world_reduce,
+                                'Y': xy[1].item() * train_loader.dataset.world_reduce}
                 x_raw, y_raw = [], []
 
                 ## project back to camera frames
@@ -167,6 +224,15 @@ def main(args):
                     b, t = min(y_raw), max(y_raw)
                     w, h = r-l, t-b
                     
+                    
+                    ## DEBUGGING
+                    print([l,b,r,t])
+                    fig_cam_subplots[cam_id].add_patch(
+                        patches.Rectangle((l, b), w, h, fill=False, lw=3, ec=colours[batch_idx % len(colours)]))
+                    fig_cam_subplots[cam_id].annotate(f"{batch_idx}", (l, b), color='white',
+                                                        weight='bold', fontsize=10, ha='center', va='center')
+
+                    
                     projected_bbox.append(np.array([l, b, w, h]))
                 projected_bbox = np.array(projected_bbox)
                 
@@ -174,16 +240,24 @@ def main(args):
                 cam_image = raw_data[0][cam_id].permute(1,2,0).detach().cpu().numpy()
                 bbox_features = encoder(cam_image, projected_bbox.copy())
                 
+                
                 ## aggregate features of multiple views
                 mean_feature = np.mean(bbox_features, axis=0)
                 features.append(mean_feature)
+            
+            
+            ## DEBUGGING
+            cam_filename = os.path.join("debug", str(batch_idx).zfill(5) + '_init.jpg')
+            fig_cam.savefig(cam_filename, bbox_inches='tight')
+            plt.close(fig_cam)
+            print(f"saved to {cam_filename}")
         
         ## preprocess for tracker
         assert len(scores) == len(grid_xy) == len(features)
         for (xy, id, score, feature) in zip(grid_xy, ids, scores, features):
             x, y = xy[0].item(), xy[1].item()
             bbox = [x-args.bbox_len, y-args.bbox_len, x+args.bbox_len, y+args.bbox_len]
-            detections.append(Detection(bbox, score, feature))
+            detections.append(Detection(bbox, score.item(), feature))
         
         tracker.predict()
         tracker.update(detections)
@@ -198,6 +272,7 @@ def main(args):
             fig_cam_subplots[cam_id].set_axis_off()
         
         for cam_id in range(num_cam):
+            bev_det = []
             for track in tracker.tracks:
                 if not track.is_confirmed() or track.time_since_update > 1:
                     continue
@@ -219,10 +294,25 @@ def main(args):
                 l, r = min(x_raw), max(x_raw)
                 b, t = min(y_raw), max(y_raw)
                 w, h = r-l, t-b
-                print(l ,b, w, h)
+                # print(l ,b, w, h)
+                bev_det.append(np.array([l, b, r, t]))
+            
+            costs = -compute_iou(np.stack(bev_det), cam_dets[cam_id])
+            row_ind, col_ind = linear_sum_assignment(costs)
+            
+            bev2cam = {}
+            for rid, cid in zip(row_ind, col_ind):
+                if -costs[rid][cid] >= args.yolo_ths:
+                    bev2cam[rid] = cid
+            for i, det in enumerate(bev_det):
+                if i in bev2cam:
+                    box = cam_dets[cam_id][bev2cam[i]]
+                    l, b, r, t = box
+                else:
+                    l, b, r, t = det
                 
                 fig_cam_subplots[cam_id].add_patch(
-                    patches.Rectangle((l, b), w, h, fill=False, lw=1, ec=colours[track_id % len(colours)]))
+                    patches.Rectangle((l, b), r-l, t-b, fill=False, lw=3, ec=colours[track_id % len(colours)]))
                 fig_cam_subplots[cam_id].annotate(f"{track_id}", (l, b), color='white',
                                                     weight='bold', fontsize=10, ha='center', va='center')
 
@@ -310,9 +400,10 @@ def parse_args():
     parser.add_argument('--outdir', type=str, default='./deepsort_outputs')
     
     # post-processing
-    parser.add_argument('--nms_ths', type=float, default=12)
+    parser.add_argument('--nms_ths', type=float, default=20)
     parser.add_argument('--top_k', type=int, default=50)
     parser.add_argument('--bbox_len', type=int, default=5)
+    parser.add_argument('--yolo_ths', type=float, default=0.3)
     
     # DeepSORT
     parser.add_argument('--encoder', type=str, default='./deep_sort/mars-small128.pb')
