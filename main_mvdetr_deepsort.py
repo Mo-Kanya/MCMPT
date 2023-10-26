@@ -268,8 +268,8 @@ def parse_args():
     
     # dataset
     parser.add_argument('--configfile', type=str, 
-                        default='/home/kanya/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
-                        # default='/home/kanyamo/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
+                        # default='/home/kanya/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
+                        default='/home/kanyamo/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
     parser.add_argument('-d', '--dataset', type=str, default='MMP', choices=['MMP'])
     parser.add_argument('--world_reduce', type=int, default=2)
     parser.add_argument('--world_kernel_size', type=int, default=5)
@@ -282,8 +282,8 @@ def parse_args():
     # model
     parser.add_argument('--arch', type=str, default='resnet18', choices=['vgg11', 'resnet18', 'mobilenet'])
     parser.add_argument('--detection_model_path_home', type=str, 
-                        default='/home/kanya/MVDeTr/logs/MMP')
-                        # default='/home/kanyamo/MVDeTr/logs/MMP')
+                        # default='/home/kanya/MVDeTr/logs/MMP')
+                        default='/home/kanyamo/MVDeTr/logs/MMP')
     parser.add_argument('--resume', type=str, default="aug_deform_trans_lr0.0005_baseR0.1_neck128_out0_alpha1.0_id0_drop0.0_dropcam0.0_worldRK2_5_imgRK4_10_2023-04-12_20-59-36")
     parser.add_argument('--world_feat', type=str, default='deform_trans',
                         choices=['conv', 'trans', 'deform_conv', 'deform_trans', 'aio'])
