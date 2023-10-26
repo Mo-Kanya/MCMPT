@@ -96,6 +96,11 @@ def _nn_cosine_distance(x, y):
     return distances.min(axis=0)
 
 
+def _sub_nn_cosine_distance(x, y):
+    distances = _cosine_distance(x, y)
+    return np.min(distances)
+
+
 class NearestNeighborDistanceMetric(object):
     """
     A nearest neighbor distance metric that, for each target, returns
@@ -175,3 +180,126 @@ class NearestNeighborDistanceMetric(object):
         for i, target in enumerate(targets):
             cost_matrix[i, :] = self._metric(self.samples[target], features)
         return cost_matrix
+
+
+class SimpleMultiviewNearestNeighborDistanceMetric(object):
+    """
+    A wrapper of NearestNeighborDistanceMetric for each camera view
+    TODO: implement view feature masks
+    """
+
+    def __init__(self, metric, matching_threshold, budget=None, num_view=6):
+        self.num_view = num_view
+        self.matching_threshold = matching_threshold
+        self.budget = budget
+        self.nn_dists = []
+        for i in range(num_view):
+            self.nn_dists.append(NearestNeighborDistanceMetric(metric, matching_threshold, budget))
+
+
+    def partial_fit(self, features, targets, active_targets, valid_views=None):
+        """Update the distance metric with new data.
+
+        Parameters
+        ----------
+        features : ndarray
+            An NxCxM matrix of N features of C cameras of dimensionality M.
+        targets : ndarray
+            An integer array of associated target identities.
+        active_targets : List[int]
+            A list of targets that are currently present in the scene.
+        valid_views:
+            A NxC binary mask specifying if the feature belongs to a person
+        """
+        for i in range(self.num_view):
+            self.nn_dists[i].partial_fit(features[:,i,:], targets, active_targets)
+
+    def distance(self, features, targets):
+        """Compute distance between features and targets.
+
+        Parameters
+        ----------
+        features : ndarray
+            An NxCxM matrix of N features of C cameras of dimensionality M.
+        targets : List[int]
+            A list of targets to match the given `features` against.
+
+        Returns
+        -------
+        ndarray
+            Returns a cost matrix of shape len(targets), len(features), where
+            element (i, j) contains the closest squared distance between
+            `targets[i]` and `features[j]`.
+
+        """
+        cost_matices = []
+        for i in range(self.num_view):
+            cost_matices.append(self.nn_dists[i].distance(features[:, i, :], targets))
+        cost_matices = np.stack(cost_matices, axis=-1)
+        return np.min(cost_matices, axis=-1)
+
+
+class MultiviewNearestNeighborDistanceMetric(object):
+    """
+    A nearest neighbor distance metric for multi-view features
+    This can be simplified if cross-view appearance matching is impossible to happen
+    """
+
+    def __init__(self, metric, matching_threshold, budget=None, num_view=6):
+
+        if metric == "cosine":
+            self._metric = _sub_nn_cosine_distance
+        else:
+            raise ValueError(
+                "Invalid metric; must be either 'euclidean' or 'cosine'")
+        self.matching_threshold = matching_threshold
+        self.budget = budget
+        self.num_view = num_view
+        self.samples = {}
+
+    def partial_fit(self, features, targets, active_targets):
+        """Update the distance metric with new data.
+
+        Parameters
+        ----------
+        features : ndarray
+            A list of N feature array of varying length.
+        targets : ndarray
+            An integer array of associated target identities.
+        active_targets : List[int]
+            A list of targets that are currently present in the scene.
+
+        """
+        for feature, target in zip(features, targets):
+            self.samples.setdefault(target, []).extend(feature)
+            # might be better to budget over number of history frames
+            if self.budget is not None:
+                self.samples[target] = self.samples[target][-self.budget:]
+        self.samples = {k: self.samples[k] for k in active_targets}
+
+    def distance(self, features, targets):
+        """Compute distance between features and targets.
+
+        Parameters
+        ----------
+        features : ndarray
+            A list of N feature array of varying length.
+        targets : List[int]
+            A list of targets to match the given `features` against.
+
+        Returns
+        -------
+        ndarray
+            Returns a cost matrix of shape len(targets), len(features), where
+            element (i, j) contains the closest squared distance between
+            `targets[i]` and `features[j]`.
+
+        """
+        cost_matrix = np.zeros((len(targets), len(features)))
+        for i, target in enumerate(targets):
+            for j, feature in enumerate(features):
+                cost_matrix[i, j] = self._metric(self.samples[target], feature)
+        return cost_matrix
+
+
+# if __name__ == '__main__':
