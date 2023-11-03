@@ -195,11 +195,11 @@ def main(args):
             fig_cam = plt.figure(figsize=(6.4 * 4, 4.8 * 3))
             plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0.05)
             fig_cam_subplots = []
-            for cam_id in range(num_cam):
-                fig_cam_subplots.append(fig_cam.add_subplot(2, num_cam//2, cam_id + 1, title=f"Camera {cam_id + 1}"))
-                img_cam = raw_data[0][cam_id].permute(1, 2, 0).detach().cpu().numpy()
-                fig_cam_subplots[cam_id].imshow(img_cam)
-                fig_cam_subplots[cam_id].set_axis_off()
+            for cam_id_ in range(num_cam):
+                fig_cam_subplots.append(fig_cam.add_subplot(2, num_cam//2, cam_id_ + 1, title=f"Camera {cam_id_ + 1}"))
+                img_cam = raw_data[0][cam_id_].permute(1, 2, 0).detach().cpu().numpy()
+                fig_cam_subplots[cam_id_].imshow(img_cam)
+                fig_cam_subplots[cam_id_].set_axis_off()
                     
                     
                    
@@ -212,12 +212,12 @@ def main(args):
 
                 ## project back to camera frames
                 projected_bbox = []
-                for cam_id in range(num_cam):
+                for cam_id_ in range(num_cam):
                     for offset in [[BODY_WIDTH, BODY_WIDTH, 0], [-BODY_WIDTH, -BODY_WIDTH, 0],
                                     [BODY_WIDTH, -BODY_WIDTH, 0], [-BODY_WIDTH, BODY_WIDTH, 0],
                                     [BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT],
                                     [BODY_WIDTH, -BODY_WIDTH, BODY_HEIGHT], [-BODY_WIDTH, BODY_WIDTH, BODY_HEIGHT]]:
-                        x_cam, y_cam = coord_mapper.projection(foot_point, cam_id+1, body_offset=offset)
+                        x_cam, y_cam = coord_mapper.projection(foot_point, cam_id_+1, body_offset=offset)
                         x_raw.append(x_cam)
                         y_raw.append(y_cam)
                     l, r = min(x_raw), max(x_raw)
@@ -227,15 +227,16 @@ def main(args):
                     
                     ## DEBUGGING
                     print([l,b,r,t])
-                    fig_cam_subplots[cam_id].add_patch(
+                    fig_cam_subplots[cam_id_].add_patch(
                         patches.Rectangle((l, b), w, h, fill=False, lw=3, ec=colours[batch_idx % len(colours)]))
-                    fig_cam_subplots[cam_id].annotate(f"{batch_idx}", (l, b), color='white',
+                    fig_cam_subplots[cam_id_].annotate(f"{batch_idx}", (l, b), color='white',
                                                         weight='bold', fontsize=10, ha='center', va='center')
 
                     
                     projected_bbox.append(np.array([l, b, w, h]))
                 projected_bbox = np.array(projected_bbox)
                 
+                # TODO: cam_id should be within the for loop?
                 ## extract features
                 cam_image = raw_data[0][cam_id].permute(1,2,0).detach().cpu().numpy()
                 bbox_features = encoder(cam_image, projected_bbox.copy())
