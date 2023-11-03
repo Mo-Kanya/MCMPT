@@ -49,6 +49,35 @@ def get_bbox_lbrt(coord_mapper, foot_point, cam_id):
     
     return l, b, r, t
 
+def compute_iou(boxes1, boxes2):
+    """
+    Input:
+        boxes1: Nx4 ndarray, representing N bounding boxes coordinates
+        boxes2: Mx4 ndarray, representing M bounding boxes coordinates
+    Output:
+        iou_mat: NxM ndarray, with iou_mat[i, j] = iou(boxes1[i], boxes2[j])
+    """
+    N = boxes1.shape[0]
+    M = boxes2.shape[0]
+    iou_mat = torch.zeros((N, M))
+    box2areas = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    # print( box2areas.shape)
+
+    for i in range(N):
+        box1 = boxes1[i]
+
+        Iwidth = torch.minimum(box1[2], boxes2[:, 2]) - torch.maximum(box1[0], boxes2[:, 0])
+        Iwidth = torch.maximum(Iwidth, torch.zeros(Iwidth.shape[0]).cuda())
+        Iheight = torch.minimum(box1[3], boxes2[:, 3]) - torch.maximum(box1[1], boxes2[:, 1])
+        Iheight = torch.maximum(Iheight, torch.zeros(Iheight.shape[0]).cuda())
+        I = Iwidth * Iheight
+
+        U = (box1[2] - box1[0]) * (box1[3] - box1[1]) + box2areas - I
+
+        iou_mat[i, :] = I / U
+
+    return iou_mat
+
 def main(args):
     # check if in debug mode
     gettrace = getattr(sys, 'gettrace', None)
@@ -192,6 +221,7 @@ def main(args):
         #     x, y = xy[0].item(), xy[1].item()
         #     detections.append(list([x, y, score.item()]))
         
+        bbox_xywhs_all = [] # (NUM_CAM, num_bboxes, 2)
         for i, (xy, score) in enumerate(zip(grid_xy, scores)):
             x, y = xy[0].item(), xy[1].item()
             foot_point = {'X': x * train_loader.dataset.world_reduce,
@@ -201,39 +231,58 @@ def main(args):
             for cam_id in range(NUM_CAM):
                 l, b, r, t = get_bbox_lbrt(coord_mapper, foot_point, cam_id)
                 w, h = r - l, t - b
-                bbox_xywhs.append(np.array([l, b, w, h]))
-            bbox_xywhs = np.array(bbox_xywhs)
-                        
-            cam_imgs = raw_data[0].permute(0,2,3,1).detach().cpu().numpy()
-            confs = np.full((NUM_CAM, 1), score)
-            clss = np.zeros((NUM_CAM, 1))
-            out_bboxs = strongsort.update(xy, bbox_xywhs, confs, clss, cam_imgs, args.bbox_len)
+                bbox_xywhs.append([l, b, w, h])
                 
-            if args.visualize and False:
-                fig_cam_subplots[cam_id].add_patch(
-                    patches.Rectangle((l, b), w, h, fill=False, lw=7, ec=colours[i % len(colours)]))
-                fig_cam_subplots[cam_id].annotate(f"{batch_idx}", (l, b), color='white',
-                                                    weight='bold', fontsize=10, ha='center', va='center')
-        
+                VIZ_MVDETR_RESULTS = True
+                if args.visualize and VIZ_MVDETR_RESULTS:
+                    fig_cam_subplots[cam_id].add_patch(
+                        patches.Rectangle((l, b), w, h, fill=False, lw=7, ec=colours[i % len(colours)]))
+                    fig_cam_subplots[cam_id].annotate(f"mvdetr_{i}", (l, b), color='white',
+                                                        weight='bold', fontsize=10, ha='center', va='center')
             
-        if len(out_bboxs) > 0:
-            for j, (output, conf) in enumerate(zip(out_bboxs, scores)):
-                bboxes = output[0:4]
-                id = int(output[4])
-                cls = output[5]
-                
-                for cam_id in range(NUM_CAM):
-                    l, b, r, t = get_bbox_lbrt(coord_mapper, foot_point, cam_id)
-                    w, h = r - l, t - b
-            
-                    if args.visualize:
+                VIZ_YOLO_RESULTS = True
+                if args.visualize and VIZ_YOLO_RESULTS:
+                    for ii, box_xywh in enumerate(cam_dets[cam_id]):
+                        ll, tt, ww, hh = box_xywh.detach().cpu().numpy()
+                        bb = tt + hh
                         fig_cam_subplots[cam_id].add_patch(
-                            patches.Rectangle((l, b), w, h, fill=False, lw=7, ec=colours[i % len(colours)]))
-                        fig_cam_subplots[cam_id].annotate(f"{id}", (l, b), color='white',
-                                                            weight='bold', fontsize=15, ha='center', va='center')
+                            patches.Rectangle((ll, bb), ww, hh, fill=False, lw=3, ec=(1,1,1)))
+                        fig_cam_subplots[cam_id].annotate(f"yolo_{ii}", (l, b), color='white',
+                                                            weight='bold', fontsize=10, ha='center', va='center')
+            bbox_xywhs_all.append(torch.Tensor(bbox_xywhs))
+        
+        # ## only include unoccluded images using YOLO results
+        # for bbox_xywh, cam_det in zip(bbox_xywhs_all, cam_dets):
+        #     costs = -compute_iou(bbox_xywh, cam_det)
+        #     row_ind, col_ind = linear_sum_assignment(costs)
+            
+        #     for rid, cid in zip(row_ind, col_ind):
+        #         if -costs[rid][cid] >= 0.3:
+        #             bev2cam[rid] = cid
+            
+        # cam_imgs = raw_data[0].permute(0,2,3,1).detach().cpu().numpy()
+        # confs = scores.repeat(6,1)
+        # clss = torch.zeros((NUM_CAM, scores.shape[0]))
+        # out_bboxs = strongsort.update(xy, bbox_xywhs, confs, clss, cam_imgs, args.bbox_len)
+        
+        # if len(out_bboxs) > 0:
+        #     for j, (output, conf) in enumerate(zip(out_bboxs, scores)):
+        #         bboxes = output[0:4]
+        #         id = int(output[4])
+        #         cls = output[5]
+                
+        #         for cam_id in range(NUM_CAM):
+        #             l, b, r, t = get_bbox_lbrt(coord_mapper, foot_point, cam_id)
+        #             w, h = r - l, t - b
+            
+        #             if args.visualize:
+        #                 fig_cam_subplots[cam_id].add_patch(
+        #                     patches.Rectangle((l, b), w, h, fill=False, lw=7, ec=colours[i % len(colours)]))
+        #                 fig_cam_subplots[cam_id].annotate(f"{id}", (l, b), color='white',
+        #                                                     weight='bold', fontsize=15, ha='center', va='center')
  
         if args.visualize:
-            cam_filename = os.path.join(args.outdir, str(batch_idx).zfill(5) + '.jpg')
+            cam_filename = os.path.join(outdir, str(batch_idx).zfill(5) + '.jpg')
             fig_cam.savefig(cam_filename, bbox_inches='tight')
             plt.close(fig_cam)
             print(f"saved to {cam_filename}")
