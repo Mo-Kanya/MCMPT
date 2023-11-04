@@ -221,17 +221,17 @@ def main(args):
         #     x, y = xy[0].item(), xy[1].item()
         #     detections.append(list([x, y, score.item()]))
         
-        bbox_xywhs_all = [] # (NUM_CAM, num_bboxes, 2)
-        for i, (xy, score) in enumerate(zip(grid_xy, scores)):
+        bbox_xywhs_all = [[] for _ in range(NUM_CAM)] # (NUM_CAM, num_bboxes, 2)
+        for i, xy in enumerate(grid_xy):
             x, y = xy[0].item(), xy[1].item()
             foot_point = {'X': x * train_loader.dataset.world_reduce,
                           'Y': y * train_loader.dataset.world_reduce}
             
-            bbox_xywhs = []
             for cam_id in range(NUM_CAM):
                 l, b, r, t = get_bbox_lbrt(coord_mapper, foot_point, cam_id)
+                x, y = (l+r)/2, (b+t)/2
                 w, h = r - l, t - b
-                bbox_xywhs.append([l, b, w, h])
+                bbox_xywhs_all[cam_id].append([x, y, w, h])
                 
                 VIZ_MVDETR_RESULTS = True
                 if args.visualize and VIZ_MVDETR_RESULTS:
@@ -243,43 +243,47 @@ def main(args):
                 VIZ_YOLO_RESULTS = True
                 if args.visualize and VIZ_YOLO_RESULTS:
                     for ii, box_xywh in enumerate(cam_dets[cam_id]):
-                        ll, tt, ww, hh = box_xywh.detach().cpu().numpy()
-                        bb = tt + hh
+                        xx, yy, ww, hh = box_xywh.detach().cpu().numpy()
+                        ll = xx - ww/2
+                        bb = yy - hh/2
                         fig_cam_subplots[cam_id].add_patch(
                             patches.Rectangle((ll, bb), ww, hh, fill=False, lw=3, ec=(1,1,1)))
-                        fig_cam_subplots[cam_id].annotate(f"yolo_{ii}", (l, b), color='white',
+                        fig_cam_subplots[cam_id].annotate(f"yolo_{ii}", (ll, bb), color='white',
                                                             weight='bold', fontsize=10, ha='center', va='center')
-            bbox_xywhs_all.append(torch.Tensor(bbox_xywhs))
+        bbox_xywhs_all = torch.Tensor(bbox_xywhs_all)
         
-        # ## only include unoccluded images using YOLO results
-        # for bbox_xywh, cam_det in zip(bbox_xywhs_all, cam_dets):
-        #     costs = -compute_iou(bbox_xywh, cam_det)
-        #     row_ind, col_ind = linear_sum_assignment(costs)
+        ## create masks to omit occluded bboxes using YOLO results
+        valid_bboxs = []
+        for bbox_xywh, cam_det in zip(bbox_xywhs_all, cam_dets):
+            costs = -compute_iou(bbox_xywh, cam_det)
+            row_ind, col_ind = linear_sum_assignment(costs)
             
-        #     for rid, cid in zip(row_ind, col_ind):
-        #         if -costs[rid][cid] >= 0.3:
-        #             bev2cam[rid] = cid
+            valid_cams = np.zeros(bbox_xywh.shape[0], dtype=int)
+            for rid, cid in zip(row_ind, col_ind):
+                if -costs[rid][cid] >= args.yolo_threshold:
+                    valid_cams[rid] = 1
+            valid_bboxs.append(valid_cams)
+        valid_bboxs = np.array(valid_bboxs)
             
-        # cam_imgs = raw_data[0].permute(0,2,3,1).detach().cpu().numpy()
-        # confs = scores.repeat(6,1)
-        # clss = torch.zeros((NUM_CAM, scores.shape[0]))
-        # out_bboxs = strongsort.update(xy, bbox_xywhs, confs, clss, cam_imgs, args.bbox_len)
+        cam_imgs = raw_data[0].permute(0,2,3,1).detach().cpu().numpy()
+        clss = torch.zeros(NUM_CAM)
+        out_bboxs = strongsort.update(xy, valid_bboxs, bbox_xywhs_all, scores, clss, cam_imgs, args.bbox_len)
         
-        # if len(out_bboxs) > 0:
-        #     for j, (output, conf) in enumerate(zip(out_bboxs, scores)):
-        #         bboxes = output[0:4]
-        #         id = int(output[4])
-        #         cls = output[5]
+        if len(out_bboxs) > 0:
+            for j, (output, conf) in enumerate(zip(out_bboxs, scores)):
+                bboxes = output[0:4]
+                id = int(output[4])
+                cls = output[5]
                 
-        #         for cam_id in range(NUM_CAM):
-        #             l, b, r, t = get_bbox_lbrt(coord_mapper, foot_point, cam_id)
-        #             w, h = r - l, t - b
+                for cam_id in range(NUM_CAM):
+                    l, b, r, t = get_bbox_lbrt(coord_mapper, foot_point, cam_id)
+                    w, h = r - l, t - b
             
-        #             if args.visualize:
-        #                 fig_cam_subplots[cam_id].add_patch(
-        #                     patches.Rectangle((l, b), w, h, fill=False, lw=7, ec=colours[i % len(colours)]))
-        #                 fig_cam_subplots[cam_id].annotate(f"{id}", (l, b), color='white',
-        #                                                     weight='bold', fontsize=15, ha='center', va='center')
+                    if args.visualize:
+                        fig_cam_subplots[cam_id].add_patch(
+                            patches.Rectangle((l, b), w, h, fill=False, lw=7, ec=colours[i % len(colours)]))
+                        fig_cam_subplots[cam_id].annotate(f"{id}", (l, b), color='white',
+                                                            weight='bold', fontsize=15, ha='center', va='center')
  
         if args.visualize:
             cam_filename = os.path.join(outdir, str(batch_idx).zfill(5) + '.jpg')
@@ -345,7 +349,7 @@ def parse_args():
     parser.add_argument('--nms_ths', type=float, default=20)
     parser.add_argument('--top_k', type=int, default=50)
     parser.add_argument('--bbox_len', type=int, default=5)
-    parser.add_argument('--yolo_ths', type=float, default=0.3)
+    parser.add_argument('--yolo_threshold', type=float, default=0.3)
     
     # StrongSORT
     parser.add_argument('--strong_sort_weights', type=str, default='strong_sort/osnet_x0_25_msmt17.pt')

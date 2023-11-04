@@ -43,19 +43,38 @@ class StrongSORT(object):
         x, y = xy[0].item(), xy[1].item()
         return np.array([x-bbox_len, y-bbox_len, bbox_len*2, bbox_len*2])
     
-    def update(self, point_loc_topview, bbox_xywh_imgs, confidences, classes, ori_imgs, bbox_len):
+    def update(self, point_loc_topview, valid_bboxs, bbox_xywh_imgs, confidences, classes, ori_imgs, bbox_len):
         self.height, self.width = ori_imgs[0].shape[:2]
+        num_cam, num_bbox = bbox_xywh_imgs.shape[:-1]
         
         # generate detections
-        features_allcam = []
-        for (bbox_xywh, ori_img) in zip(bbox_xywh_imgs, ori_imgs):
-            feats = self._get_features([bbox_xywh], ori_img)
-            features_allcam.append(feats[0].detach().cpu().numpy())
-        features_allcam = torch.Tensor(features_allcam)
-        features = torch.mean(features_allcam, axis=0)
+        features = []
+        for i in range(num_bbox):
+            valid_bbox = valid_bboxs[:,i]
+            bbox_xywh = bbox_xywh_imgs[:,i,:]
+            
+            feats = self._get_features(bbox_xywh[valid_bbox == 1], ori_imgs)
+            if len(feats) > 0:
+                feature = torch.mean(feats, axis=0)
+            else:
+                feature = torch.tensor([])
+            features.append(feature.unsqueeze(0))
+        features = torch.cat(features)
+        
+        # features = []
+        # for (valid_bbox, bbox_xywh) in zip(valid_bboxs, bbox_xywh_imgs): #iterate over each camera
+        #     valid_xywhs = bbox_xywh[valid_bbox == 1]
+            
+        #     features_allcam = torch.zeros((6, 512))
+        #     for i, (valid_xywh, ori_img) in enumerate(zip(valid_xywhs, ori_imgs)):
+        #         feat = self._get_features([valid_xywh], ori_img)
+        #         features_allcam[i] = feat[0]
+        #     feature = torch.mean(features_allcam, axis=0)
+        #     features.append(feature.unsqueeze(0))
+        # features = torch.cat(features)
         
         bbox_tlwh = self._point_to_bbox(point_loc_topview, bbox_len)
-        detections = [Detection(bbox_tlwh, confidences[0], features)]
+        detections = [Detection(bbox_tlwh, conf, feat) for (conf, feat) in zip(confidences, features)]
 
         # run on non-maximum supression
         boxes = np.array([d.tlwh for d in detections])
@@ -163,7 +182,19 @@ class StrongSORT(object):
         h = int(y2 - y1)
         return t, l, w, h
 
-    def _get_features(self, bbox_xywh, ori_img):
+    def _get_features(self, bbox_xywh, ori_imgs):
+        im_crops = []
+        for box, ori_img in zip(bbox_xywh, ori_imgs):
+            x1, y1, x2, y2 = self._xywh_to_xyxy(box)
+            im = ori_img[y1:y2, x1:x2]
+            im_crops.append(im)
+        if im_crops:
+            features = self.model(im_crops)
+        else:
+            features = np.array([])
+        return features
+    
+    def _get_features_orig(self, bbox_xywh, ori_img):
         im_crops = []
         for box in bbox_xywh:
             x1, y1, x2, y2 = self._xywh_to_xyxy(box)
@@ -174,3 +205,4 @@ class StrongSORT(object):
         else:
             features = np.array([])
         return features
+
