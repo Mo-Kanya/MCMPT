@@ -3,7 +3,7 @@ grid_size:
 - 327
 - 425
 num_views: 6
-train_root: /home/kanyamo/Data/MMPdata/train
+train_root: /mnt/Data/Data/MMPdata/train
 train_list:
   63am/retail_0: 16908
   63am/retail_2: 27660
@@ -21,13 +21,6 @@ train_list:
   64am/retail_6: 26550
   64am/retail_7: 31800
   64am/retail_8: 26214
-valid_root: /home/kanyamo/Data/MMPdata/validation
+valid_root: /mnt/Data/Data/MMPdata/validation
 valid_list:
-#  64pm/retail_0: 31638
-#  64pm/retail_1: 26286
-#  64pm/retail_2: 26880
-#  64pm/retail_3: 18990
-#  64pm/retail_4: 41484
   64pm/retail_5: 16536
-#  64pm/retail_6: 22326
-#  64pm/retail_7: 34470

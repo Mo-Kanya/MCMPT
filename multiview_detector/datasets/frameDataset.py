@@ -359,11 +359,9 @@ class MMPframeDataset(VisionDataset):
             fpath = os.path.join(self.image_path, img_dir, 'rgb_' + str(new_index).zfill(5) + '_' + str(cam) + '.jpg')
             img = Image.open(fpath).convert('RGB')
             raws.append(self.raw_transform(img))
-            # print("In dataset, ", self.transform)
             if self.transform is not None:
                 img = self.transform(img)
             imgs.append(img)
-            # raws.append(img)
 
             label = json.load(
                 open(os.path.join(self.label_path, img_dir, 'rgb_' + str(new_index).zfill(5) + '_' + str(cam) + '.json'))
@@ -421,6 +419,10 @@ class MMPframeDataset(VisionDataset):
         return imgs, map_gt, imgs_gt, affine_mats, new_index
 
 
+class MMPdetectDataset(VisionDataset):
+    pass
+
+
 def test(test_projection=False):
     from torch.utils.data import DataLoader
     from multiview_detector.datasets.Wildtrack import Wildtrack
@@ -444,7 +446,6 @@ def test(test_projection=False):
     map_gt = (map_gt["heatmap"] == torch.max(map_gt["heatmap"]))
     subplt2.imshow(map_gt.detach().numpy().transpose([1, 2, 0]))
     plt.savefig('./vis_set.jpg')
-    sdfsdf
 
     # print(map_gt.shape)
     xys_gt = mvdet_decode(map_gt.unsqueeze(0))
@@ -453,7 +454,6 @@ def test(test_projection=False):
     pos_gt = positions_gt[0, ids_gt]
     print(ids_gt)
     print(pos_gt)
-    sfasdf
 
     # subplt1.imshow(imgs_gt['heatmap'][0].detach().numpy().transpose([1, 2, 0]))
     # subplt2.imshow(map_gt['heatmap'].detach().numpy().transpose([1, 2, 0]))
