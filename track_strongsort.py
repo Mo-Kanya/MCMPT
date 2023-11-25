@@ -106,7 +106,7 @@ def sim_decode(scoremap):
     return torch.cat([xy, scores], dim=2)
 
 
-def detect_and_track_cam(model, detector, log_fpath, data_loader, max_cosine_distance=1, nn_budget=150,
+def detect_and_track_cam(model, detector, log_fpath, data_loader, max_cosine_distance=1, nn_budget=100,
                          res_dir=None, visualize=False, coord_mapper=None):
     metric = nn_matching.NearestNeighborDistanceMetric(
         'cosine',
