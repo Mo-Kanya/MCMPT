@@ -46,7 +46,6 @@ class CoordMapper:
             # 1600
             self._camera_configs['Space']['MinW']
         ])
-        print("@@@@@ ", self._min_volume)
 
     def projection(self, person_center, camera_id, body_offset):
         '''
