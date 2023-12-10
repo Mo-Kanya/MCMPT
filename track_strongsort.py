@@ -207,21 +207,29 @@ def detect_and_track_cam(model, detector, log_fpath, data_loader, max_cosine_dis
             for cam_id in range(6):
                 bev_det = []
                 track_id = []
-                for d in track_bbs_ids:
+                for track in tracker.tracks:
+                    if not track.is_confirmed() or track.time_since_update > 1:
+                        continue
+                    d = track.mean[:4]
                     d = d.astype(np.int32)
                     foot_point = {'X': d[0] * data_loader.dataset.world_reduce,
                                   'Y': d[1] * data_loader.dataset.world_reduce}
                     l, r, b, t = project_box3d(foot_point, coord_mapper, cam_id)
 
-                    track_id.append(d[-1])
+                    track_id.append(track.track_id)
                     bev_det.append(np.array([l, b, r, t]))
-
+                if len(bev_det) == 0:
+                    res_file = os.path.join(res_dir, 'rgb_' + str(batch_idx).zfill(5) + '_' + str(cam_id + 1) + '.json')
+                    with open(res_file, 'w') as fp:
+                        json.dump({}, fp)
+                    continue
                 costs = -compute_iou(np.stack(bev_det), cam_dets[cam_id])
                 row_ind, col_ind = linear_sum_assignment(costs)
 
                 bev2cam = {}
+                res_dict = {}
                 for rid, cid in zip(row_ind, col_ind):
-                    if -costs[rid][cid] >= 0.2:
+                    if -costs[rid][cid] >= 0.1:
                         bev2cam[rid] = cid
                 for i, det in enumerate(bev_det):
                     if i in bev2cam:  #
@@ -230,13 +238,16 @@ def detect_and_track_cam(model, detector, log_fpath, data_loader, max_cosine_dis
                         l, b, r, t = box[0], box[1], box[2], box[3]
                     else:
                         l, b, r, t = det[0], det[1], det[2], det[3]
+                    res_dict[str(track_id[i])] = [round(l), round(b), round(r), round(t)]
 
                     fig_cam_subplots[cam_id].add_patch(
-                        patches.Rectangle((l, b), r - l, t - b, fill=False, lw=1,
+                        patches.Rectangle((l, b), r - l, t - b, fill=False, lw=3,
                                           ec=colours[track_id[i] % len(colours)]))
                     fig_cam_subplots[cam_id].annotate(f"{track_id[i]}", (l, b), color='white',
                                                       weight='bold', fontsize=10, ha='center', va='center')
-
+                res_file = os.path.join(res_dir, 'rgb_' + str(batch_idx).zfill(5) + '_' + str(cam_id + 1) + '.json')
+                with open(res_file, 'w') as fp:
+                    json.dump(res_dict, fp)
             cam_filename = log_fpath + f'_nms{NMS_THS}_bbox{BBOX_LEN}_' + str(
                 batch_idx).zfill(5) + '_cam.jpg'
             fig_cam.savefig(cam_filename, bbox_inches='tight')
