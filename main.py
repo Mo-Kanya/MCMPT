@@ -1,5 +1,6 @@
 # This version is based on MVDetr
 import os
+import json
 import random
 import warnings
 from datetime import datetime
@@ -26,7 +27,7 @@ from mmp_tracking_helper.mmp_mapping3D_2D_script import *
 from deep_sort import nn_matching
 from deep_sort.tracker import Tracker
 from deep_sort.detection import Detection
-from reid_multibackend import ReIDDetectMultiBackend
+from reid.reid_multibackend import ReIDDetectMultiBackend
 
 START_FRAME = 0
 END_FRAME = -1
@@ -195,6 +196,7 @@ def detect_and_track_cam(model, detector, tracker, data_loader, res_dir,
                 fig_cam_subplots[cam_id].imshow(img_cam)
                 fig_cam_subplots[cam_id].set_axis_off()
 
+            res_dicts = {}
             for cam_id in range(NUM_CAM):
                 bev_det, track_ids = [], []                    
                 for track in tracker.tracks:
@@ -219,7 +221,7 @@ def detect_and_track_cam(model, detector, tracker, data_loader, res_dir,
                 costs = -compute_iou(np.stack(bev_det), cam_dets[cam_id])
                 row_ind, col_ind = linear_sum_assignment(costs)
 
-                bev2cam = {}
+                bev2cam, res_dict = {}, {}
                 for rid, cid in zip(row_ind, col_ind):
                     if -costs[rid][cid] >= args.cost_ths:
                         bev2cam[rid] = cid
@@ -229,13 +231,19 @@ def detect_and_track_cam(model, detector, tracker, data_loader, res_dir,
                         l, b, r, t = box[0], box[1], box[2], box[3]
                     else:
                         l, b, r, t = det[0], det[1], det[2], det[3]
+                    res_dict["track_id " + str(track_ids[i])] = [round(l), round(b), round(r), round(t)]
 
                     fig_cam_subplots[cam_id].add_patch(
-                        patches.Rectangle((l, b), r - l, t - b, fill=False, lw=5,
+                        patches.Rectangle((l, b), r - l, t - b, fill=False, lw=3,
                                           ec=colours[track_ids[i] % len(colours)]))
                     fig_cam_subplots[cam_id].annotate(f"{track_ids[i]}", (l, b), color='white',
                                                       weight='bold', fontsize=20, ha='center', va='center')
-
+                res_dicts["cam " + str(cam_id)] = res_dict
+            
+            res_file = os.path.join(res_dir, 'rgb_' + str(batch_idx).zfill(5) + '.json')
+            with open(res_file, 'w') as fp:
+                json.dump(res_dicts, fp)
+                    
             cam_filename = os.path.join(res_dir, str(batch_idx).zfill(5) + '_cam.jpg')
             fig_cam.savefig(cam_filename, bbox_inches='tight')
             plt.close(fig_cam)
@@ -274,7 +282,6 @@ def main(args):
 
     print('Load single-view detector...')
     detector = YOLO(args.yolo_modelpath).to("cuda")
-    detector.eval()
 
     print('Set up coordinate mapper...')
     coordmap = CoordMapper(test_set.calibration_path)
@@ -291,6 +298,8 @@ def main(args):
     date_time = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
     outdir = os.path.join(args.outdir, date_time)
     os.makedirs(outdir, exist_ok=True)
+    with open(os.path.join(outdir, "settings.json"), "w") as f:
+        f.write(json.dumps(vars(args), indent=4))
 
     print('Start tracking...')
     detect_and_track_cam(model=model,
@@ -330,15 +339,11 @@ if __name__ == '__main__':
     parser.add_argument('--body_width', type=float, default=150)
     parser.add_argument('--body_height', type=float, default=1600)
     
-    parser.add_argument('--dataset_config_file', type=str, 
-                        default='/home/kanyamo/MVDeTr/multiview_detector/datasets/configs/retail.yaml')
-    parser.add_argument('--mvdetr_modelpath', type=str, 
-                        default='/home/kanyamo/MVDeTr/logs/MMP/aug_deform_trans_lr0.0005_baseR0.1_neck128_out0_alpha1.0_id0_drop0.0_dropcam0.0_worldRK2_5_imgRK4_10_2023-04-12_20-59-36/MultiviewDetector.pth')
-    parser.add_argument('--yolo_modelpath', type=str, 
-                        default='/home/kanyamo/MVDeTr/runs/detect/train3/weights/best.pt')
-    parser.add_argument('--reid_modelpath', type=str,
-                        default='osnet_x0_25_market1501.pt')
-    parser.add_argument('--outdir', type=str, default='outputs')
+    parser.add_argument('--dataset_config_file', type=str, default='dataset_config/mmptrack_retail.yaml') #sample
+    parser.add_argument('--mvdetr_modelpath', type=str, default='model_weights/MultiviewDetector.pth')
+    parser.add_argument('--yolo_modelpath', type=str, default='model_weights/yolo_finetuned.pt')
+    parser.add_argument('--reid_modelpath', type=str, default='model_weights/osnet_x0_25_market1501.pt')
+    parser.add_argument('--outdir', type=str, default='sample_outputs')
     
     args = parser.parse_args()
 
