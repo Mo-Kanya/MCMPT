@@ -165,9 +165,9 @@ def detect_and_track_cam(model, detector, tracker, data_loader, res_dir,
             
             if len(mp_feature) == 0: 
                 continue
-            
+
             mp_feature = np.stack(mp_feature) # (# valid views, 512)
-            mp_feature = np.mean(mp_feature, axis=0) # TODO
+            mp_feature = np.mean(mp_feature, axis=0)
             detections.append( Detection([x, y, 1, 150], score.item(), mp_feature) )
 
         tracker.predict()
@@ -333,11 +333,11 @@ if __name__ == '__main__':
     parser.add_argument('--sample_freq', type=int, default=1, help='sample part of frames to save time')
     
     parser.add_argument('--min_count', type=int, default=20)
-    parser.add_argument('--cost_ths', type=float, default=0.1)
+    parser.add_argument('--cost_ths', type=float, default=0.4)  # make it equal to yolo_iou_ths for simplicity
     parser.add_argument('--nms_ths', type=float, default=20)
-    parser.add_argument('--yolo_iou_ths', type=float, default=0.25)
-    parser.add_argument('--body_width', type=float, default=150)
-    parser.add_argument('--body_height', type=float, default=1600)
+    parser.add_argument('--yolo_iou_ths', type=float, default=0.4)
+    parser.add_argument('--body_width', type=float, default=125)
+    parser.add_argument('--body_height', type=float, default=1500)
     
     parser.add_argument('--dataset_config_file', type=str, default='dataset_config/mmptrack_retail.yaml') #sample
     parser.add_argument('--mvdetr_modelpath', type=str, default='model_weights/MultiviewDetector.pth')

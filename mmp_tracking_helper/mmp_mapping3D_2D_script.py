@@ -57,7 +57,7 @@ class CoordMapper:
         '''
 
         topdown_coords = np.transpose(
-            np.asarray([[person_center['X'], person_center['Y'], 0]]))
+            np.asarray([[person_center['X'], person_center['Y'], 100]]))
         body_offset = np.transpose(np.asarray([body_offset]))
         world_coord = topdown_coords / self._discretization_factor[:, np.newaxis] \
                       + body_offset + self._min_volume[:, np.newaxis]

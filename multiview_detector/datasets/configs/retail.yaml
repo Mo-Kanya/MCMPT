@@ -23,11 +23,11 @@ train_list:
   64am/retail_8: 26214
 valid_root: /home/kanyamo/Data/MMPdata/validation
 valid_list:
-#  64pm/retail_0: 31638
-#  64pm/retail_1: 26286
-#  64pm/retail_2: 26880
-#  64pm/retail_3: 18990
-#  64pm/retail_4: 41484
+  64pm/retail_0: 31638
+  64pm/retail_1: 26286
+  64pm/retail_2: 26880
+  64pm/retail_3: 18990
+  64pm/retail_4: 41484
   64pm/retail_5: 16536
-#  64pm/retail_6: 22326
-#  64pm/retail_7: 34470
+  64pm/retail_6: 22326
+  64pm/retail_7: 34470
