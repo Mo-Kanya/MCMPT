@@ -25,7 +25,7 @@ Train or finetune a new multiview detector on MMPTRACK: (or refer to its officia
 python train_det.py --resume {path to ckpt if any}
 ```
 
-To train or finetune the single-view detector, refer to its official [guide]([https://github.com/hou-yz/MVDeTr](https://docs.ultralytics.com/)).
+To train or finetune the single-view detector, refer to its official [guide](https://docs.ultralytics.com/).
 
 ## File Structures
 ```
