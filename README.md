@@ -10,7 +10,7 @@ For detailed info, refer to our [website](https://mscvprojects.ri.cmu.edu/f23tea
 - PyTorch 2.0.0
 - GPU required
 
-All dependencies are listed in `requirements.txt`.
+All dependencies are listed in `requirements.txt`. For installation of MultiScaleDeformableAttention, please also refer to this [repo](https://github.com/fundamentalvision/Deformable-DETR) to compiling CUDA operators. For torchreid, please refer to its [repo](https://github.com/KaiyangZhou/deep-person-reid).
 
 ## Execution
 ```
@@ -19,6 +19,13 @@ python3 main.py --dataset_config_file [dataset config file path]
 ```
 
 NOTE: Sample outputs can be found in `sample_outputs`.
+
+Train or finetune a new multiview detector on MMPTRACK: (or refer to its official [repo](https://github.com/hou-yz/MVDeTr))
+```
+python train_det.py --resume {path to ckpt if any}
+```
+
+To train or finetune the single-view detector, refer to its official [guide]([https://github.com/hou-yz/MVDeTr](https://docs.ultralytics.com/)).
 
 ## File Structures
 ```
